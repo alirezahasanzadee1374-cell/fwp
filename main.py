@@ -37,6 +37,7 @@ from config import (
     LOSS_7PCT_DEAD_MARKET_VOLUME_DROP,
     MINOR_CORRECTION_MAX_SELLER_RATIO,
     SMART_TARGET_MIN_WALL_PCT,
+    ALERT_PRIORITY,
 )
 
 # ---------- Logging ----------
@@ -88,7 +89,7 @@ def load_strategy():
     return strategy_module
 
 # ============================================================
-# ۲. ارسال تلگرام (با اولویت)
+# ۲. ارسال تلگرام
 # ============================================================
 def send_telegram(message: str, priority: str = "profit_update") -> bool:
     """ارسال پیام به تلگرام."""
@@ -218,7 +219,7 @@ def detect_whale_cancel(symbol: str, whale_walls: dict) -> list:
     return cancelled
 
 # ============================================================
-# ۴.۵. تشخیص نهنگ تکراری (قانون ۱۰)
+# ۴.۵. تشخیص نهنگ تکراری
 # ============================================================
 def detect_repeat_whale(symbol: str, whale_walls: dict) -> int:
     """قانون ۱۰: تشخیص نهنگ تکراری."""
@@ -236,7 +237,7 @@ def detect_repeat_whale(symbol: str, whale_walls: dict) -> int:
     return matches
 
 # ============================================================
-# ۵. تاییدیه زودهنگام (قانون ۲۹)
+# ۵. تاییدیه زودهنگام
 # ============================================================
 def detect_early_confirmation(symbol: str, current_price: float, whale_walls: dict) -> Optional[dict]:
     if symbol not in active_positions:
@@ -263,7 +264,7 @@ def detect_early_confirmation(symbol: str, current_price: float, whale_walls: di
     return None
 
 # ============================================================
-# ۶. رد پای فروش فوری (قانون ۴۳)
+# ۶. رد پای فروش فوری
 # ============================================================
 def detect_urgent_sell(symbol: str, order_book: dict, current_oi: Optional[float], power: dict) -> Optional[dict]:
     triggers = []
@@ -291,7 +292,7 @@ def detect_urgent_sell(symbol: str, order_book: dict, current_oi: Optional[float
     return None
 
 # ============================================================
-# ۷. شکار لیستینگ (قانون ۴۸)
+# ۷. شکار لیستینگ
 # ============================================================
 def detect_listing(symbol: str, whale_walls: dict) -> Optional[dict]:
     if not LISTING_HUNT_ENABLED:
@@ -307,7 +308,7 @@ def detect_listing(symbol: str, whale_walls: dict) -> Optional[dict]:
     return None
 
 # ============================================================
-# ۸. فیلتر میم‌کوین (قانون ۱۵)
+# ۸. فیلتر میم‌کوین
 # ============================================================
 def is_meme_coin(symbol: str) -> bool:
     base = symbol.replace("USDT", "").upper()
@@ -394,9 +395,6 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
     whale_intent = strategy_module.check_whale_intent(bunker, power, overlap_list, clear_path)
     decoupling = strategy_module.check_decoupling(btc_df, df_4h)
 
-    klines_5m = data_fetcher_module.get_klines(symbol, "5m", 30)
-    short_fuel = strategy_module.check_short_fuel(klines_5m) if klines_5m is not None else {"fuel_exhausted": False}
-
     news_positive = strategy_module.check_news_positive(all_news, symbol)
     news_negative = strategy_module.check_news_negative(all_news, symbol)
 
@@ -465,7 +463,7 @@ def process_signal(signal: dict, current_price: float) -> None:
     )
 
 # ============================================================
-# ۱۱. مدیریت پوزیشن‌های فعال (قانون ۳۶، ۳۷، ۳۹، ۲۲)
+# ۱۱. مدیریت پوزیشن‌های فعال (با priority filter)
 # ============================================================
 def manage_active_positions(strategy_module, data_fetcher_module, capital_manager_module, all_news):
     if not active_positions:
@@ -482,138 +480,116 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
         entries = pos["entries"]
         avg_price = capital_manager_module.calculate_avg_price(entries)
 
+        alerts_buffer = []
+        should_delete = False
+        skip_lower = False
+
         # ۱. سقف ضرر
         if capital_manager_module.check_max_loss(entries, current_price):
-            send_telegram(f"🚨 <b>سقف ضرر!</b>\nارز: {symbol}\nاقدام: خارج شوید!", priority="threat_alert")
-            del active_positions[symbol]
-            continue
+            alerts_buffer.append(("threat_alert", f"🚨 <b>سقف ضرر!</b>\nارز: {symbol}\nاقدام: خارج شوید!"))
+            should_delete = True
+            skip_lower = True
 
         # ۲. اهداف سود
-        target = capital_manager_module.check_profit_targets(avg_price, current_price)
-        if target:
-            if target["is_final"]:
-                send_telegram(
-                    f"🎯 <b>هدف ۵۰٪!</b>\nارز: {symbol}\n"
-                    f"سود: {target['profit_pct']*100:.1f}%\nاقدام: خروج کامل!",
-                    priority="profit_update"
-                )
-                del active_positions[symbol]
-                continue
-            else:
-                send_telegram(
-                    f"📈 <b>سود {target['target']*100:.0f}%</b>\n"
-                    f"ارز: {symbol}\nسود فعلی: {target['profit_pct']*100:.1f}%",
-                    priority="profit_update"
-                )
+        if not skip_lower:
+            target = capital_manager_module.check_profit_targets(avg_price, current_price)
+            if target:
+                if target["is_final"]:
+                    alerts_buffer.append(("profit_update", f"🎯 <b>هدف ۵۰٪!</b>\nارز: {symbol}\nسود: {target['profit_pct']*100:.1f}%\nاقدام: خروج کامل!"))
+                    should_delete = True
+                    skip_lower = True
+                else:
+                    alerts_buffer.append(("profit_update", f"📈 <b>سود {target['target']*100:.0f}%</b>\nارز: {symbol}\nسود فعلی: {target['profit_pct']*100:.1f}%"))
 
-        # ۳. دریافت دیتا
-        order_book = data_fetcher_module.get_order_book(symbol, 100)
-        current_oi = data_fetcher_module.get_open_interest(symbol)
-        power = strategy_module.calculate_power(order_book, current_price) if order_book else {"winner": "none", "ratio": 0}
+        # ۳. دیتای اضافی
+        order_book = None
+        power = {"winner": "none", "ratio": 0}
+        current_oi = None
 
-        # ۴. قانون ۴۳: رد پای فروش فوری
-        urgent = detect_urgent_sell(symbol, order_book, current_oi, power)
-        if urgent:
-            send_telegram(
-                f"🚨 <b>رد پای فروش!</b>\nارز: {symbol}\n"
-                f"نشانه‌ها: {', '.join(urgent['triggers'])}\nاقدام: خروج!",
-                priority="urgent_sell"
-            )
-            continue
+        if not skip_lower:
+            order_book = data_fetcher_module.get_order_book(symbol, 100)
+            current_oi = data_fetcher_module.get_open_interest(symbol)
+            power = strategy_module.calculate_power(order_book, current_price) if order_book else {"winner": "none", "ratio": 0}
+
+            # ۴. قانون ۴۳: رد پای فروش فوری
+            urgent = detect_urgent_sell(symbol, order_book, current_oi, power)
+            if urgent:
+                alerts_buffer.append(("urgent_sell", f"🚨 <b>رد پای فروش!</b>\nارز: {symbol}\nنشانه‌ها: {', '.join(urgent['triggers'])}\nاقدام: خروج!"))
+                skip_lower = True
 
         # ۵. قانون ۲۲: اتمام سوخت شورت‌ها
-        klines_5m = data_fetcher_module.get_klines(symbol, "5m", 30)
-        if klines_5m is not None:
-            fuel = strategy_module.check_short_fuel(klines_5m)
-            if fuel.get("fuel_exhausted"):
-                logger.info(f"fuel exhausted | {symbol}")
-                send_telegram(
-                    f"⛽ <b>سوخت شورت تموم شد</b>\n"
-                    f"ارز: {symbol}\n"
-                    f"نهنگ دیگه دلیلی برای ادامه نداره.\n"
-                    f"اقدام: با سود فعلی خارج شوید.",
-                    priority="urgent_sell"
-                )
-                continue
+        if not skip_lower:
+            klines_5m = data_fetcher_module.get_klines(symbol, "5m", 30)
+            if klines_5m is not None:
+                fuel = strategy_module.check_short_fuel(klines_5m)
+                if fuel.get("fuel_exhausted"):
+                    logger.info(f"fuel exhausted | {symbol}")
+                    alerts_buffer.append(("urgent_sell", f"⛽ <b>سوخت شورت تموم شد</b>\nارز: {symbol}\nاقدام: با سود فعلی خارج شوید."))
+                    skip_lower = True
 
         # ۶. قانون ۳۹: ۴ حالت در ۷٪ ضرر
-        current_loss_pct = (avg_price - current_price) / avg_price if avg_price > 0 else 0
-        if current_loss_pct >= 0.07:
-            logger.info(f"7% loss reached | {symbol} | loss={current_loss_pct*100:.1f}%")
+        if not skip_lower:
+            current_loss_pct = (avg_price - current_price) / avg_price if avg_price > 0 else 0
+            if current_loss_pct >= 0.07:
+                whale_walls = strategy_module.detect_whale_walls(order_book) if order_book else {"bid_count": 0, "bids": []}
 
-            whale_walls = strategy_module.detect_whale_walls(order_book) if order_book else {"bid_count": 0, "bids": []}
+                if whale_walls.get("bids") and whale_walls["bids"][0]["usd"] >= LOSS_7PCT_NEW_LIMIT_MIN_USD:
+                    logger.info(f"  case1: new limit | {symbol}")
+                    alerts_buffer.append(("minor_correction", f"🟡 <b>۷٪ ضرر + لیمیت جدید</b>\nارز: {symbol}\nنهنگ: ${whale_walls['bids'][0]['usd']:.0f}\nاقدام: پله دوم رو بررسی کن."))
+                    skip_lower = True
+                elif df is not None and len(df) >= 20:
+                    avg_volume = df["volume"].iloc[-20:].mean()
+                    recent_volume = df["volume"].iloc[-1]
+                    if recent_volume < avg_volume * LOSS_7PCT_DEAD_MARKET_VOLUME_DROP:
+                        logger.info(f"  case3: dead market | {symbol}")
+                        alerts_buffer.append(("threat_alert", f"🚨 <b>بی‌رمقی بازار!</b>\nارز: {symbol}\nحجم: {recent_volume/avg_volume*100:.0f}% میانگین\nاقدام: خروج فوری!"))
+                        should_delete = True
+                        skip_lower = True
 
-            if whale_walls.get("bids") and whale_walls["bids"][0]["usd"] >= LOSS_7PCT_NEW_LIMIT_MIN_USD:
-                logger.info(f"  case1: new limit | {symbol}")
-                send_telegram(
-                    f"🟡 <b>۷٪ ضرر + لیمیت جدید</b>\nارز: {symbol}\n"
-                    f"نهنگ: ${whale_walls['bids'][0]['usd']:.0f}\n"
-                    f"اقدام: پله دوم رو بررسی کن.",
-                    priority="minor_correction"
-                )
-                continue
-
-            if df is not None and len(df) >= 20:
-                avg_volume = df["volume"].iloc[-20:].mean()
-                recent_volume = df["volume"].iloc[-1]
-                if recent_volume < avg_volume * LOSS_7PCT_DEAD_MARKET_VOLUME_DROP:
-                    logger.info(f"  case3: dead market | {symbol}")
-                    send_telegram(
-                        f"🚨 <b>بی‌رمقی بازار!</b>\nارز: {symbol}\n"
-                        f"حجم: {recent_volume/avg_volume*100:.0f}% میانگین\nاقدام: خروج فوری!",
-                        priority="threat_alert"
-                    )
-                    del active_positions[symbol]
-                    continue
-
-            if power["winner"] == "sellers":
-                logger.info(f"  case4: sell pressure | {symbol}")
-                send_telegram(
-                    f"🚨 <b>فشار فروش!</b>\nارز: {symbol}\n"
-                    f"زور سلرها: {1/power['ratio']:.2f}x\nاقدام: خروج فوری!",
-                    priority="threat_alert"
-                )
-                del active_positions[symbol]
-                continue
+                if not skip_lower and power["winner"] == "sellers":
+                    logger.info(f"  case4: sell pressure | {symbol}")
+                    alerts_buffer.append(("threat_alert", f"🚨 <b>فشار فروش!</b>\nارز: {symbol}\nزور سلرها: {1/power['ratio']:.2f}x\nاقدام: خروج فوری!"))
+                    should_delete = True
+                    skip_lower = True
 
         # ۷. قانون ۳۶: اصلاح موقت
-        if power["winner"] == "sellers" and power.get("ratio", 0) > 0:
-            seller_ratio = 1 / power["ratio"]
-            if seller_ratio < MINOR_CORRECTION_MAX_SELLER_RATIO:
-                logger.info(f"minor correction | {symbol} | seller_ratio={seller_ratio:.2f}")
-                send_telegram(
-                    f"🌊 <b>اصلاح کوچک</b>\nارز: {symbol}\n"
-                    f"زور سلرها: {seller_ratio:.2f}x\nپوزیشن حفظ شود.",
-                    priority="minor_correction"
-                )
+        if not skip_lower:
+            if power["winner"] == "sellers" and power.get("ratio", 0) > 0:
+                seller_ratio = 1 / power["ratio"]
+                if seller_ratio < MINOR_CORRECTION_MAX_SELLER_RATIO:
+                    logger.info(f"minor correction | {symbol} | seller_ratio={seller_ratio:.2f}")
+                    alerts_buffer.append(("minor_correction", f"🌊 <b>اصلاح کوچک</b>\nارز: {symbol}\nزور سلرها: {seller_ratio:.2f}x\nپوزیشن حفظ شود."))
 
-        # ۸. قانون ۳۷: تارگت هوشمند
-        if order_book and order_book.get("asks"):
-            for ask_p, ask_q in order_book["asks"]:
-                ask_pct = (ask_p - current_price) / current_price
-                if 0.05 <= ask_pct <= 0.11 and ask_p * ask_q >= MIN_WHALE_WALL_USD:
-                    logger.info(f"smart target | {symbol} | ask={ask_pct*100:.1f}%")
-                    send_telegram(
-                        f"🎯 <b>دیوار فروش!</b>\nارز: {symbol}\n"
-                        f"دیوار: ${ask_p*ask_q:.0f} در {ask_pct*100:.1f}%\n"
-                        f"تارگت رو {ask_pct*100:.0f}% تنظیم کن.",
-                        priority="minor_correction"
-                    )
-                    break
+            # ۸. قانون ۳۷: تارگت هوشمند
+            if order_book and order_book.get("asks"):
+                for ask_p, ask_q in order_book["asks"]:
+                    ask_pct = (ask_p - current_price) / current_price
+                    if 0.05 <= ask_pct <= 0.11 and ask_p * ask_q >= MIN_WHALE_WALL_USD:
+                        logger.info(f"smart target | {symbol} | ask={ask_pct*100:.1f}%")
+                        alerts_buffer.append(("minor_correction", f"🎯 <b>دیوار فروش!</b>\nارز: {symbol}\nدیوار: ${ask_p*ask_q:.0f} در {ask_pct*100:.1f}%\nتارگت رو {ask_pct*100:.0f}% تنظیم کن."))
+                        break
 
-        # ۹. قانون ۲۹: تاییدیه زودهنگام
-        whale_walls_early = strategy_module.detect_whale_walls(order_book) if order_book else {"bid_count": 0}
-        early = detect_early_confirmation(symbol, current_price, whale_walls_early)
-        if early:
-            send_telegram(
-                f"🔄 <b>تاییدیه زودهنگام</b>\nارز: {symbol}\n"
-                f"ریزش: {early['current_drop']*100:.1f}%\n"
-                f"نهنگ جدید: {early['whale_count']}",
-                priority="minor_correction"
-            )
+            # ۹. قانون ۲۹: تاییدیه زودهنگام
+            whale_walls_early = strategy_module.detect_whale_walls(order_book) if order_book else {"bid_count": 0}
+            early = detect_early_confirmation(symbol, current_price, whale_walls_early)
+            if early:
+                alerts_buffer.append(("minor_correction", f"🔄 <b>تاییدیه زودهنگام</b>\nارز: {symbol}\nریزش: {early['current_drop']*100:.1f}%\nنهنگ جدید: {early['whale_count']}"))
+
+        # ✅ قانون ۳۶: فقط بالاترین اولویت رو بفرست
+        if alerts_buffer:
+            try:
+                best = min(alerts_buffer, key=lambda x: ALERT_PRIORITY.index(x[0]) if x[0] in ALERT_PRIORITY else 999)
+            except (ValueError, IndexError):
+                best = alerts_buffer[0]
+            send_telegram(best[1], priority=best[0])
+            if len(alerts_buffer) > 1:
+                logger.info(f"alerts suppressed | {symbol} | buffered={len(alerts_buffer)} | sent={best[0]}")
+
+        if should_delete:
+            del active_positions[symbol]
 
 # ============================================================
-# ۱۲. مدیریت پله دوم خودکار (قانون ۳۰)
+# ۱۲. مدیریت پله دوم خودکار
 # ============================================================
 def manage_step2_entries(strategy_module, data_fetcher_module, capital_manager_module):
     if not active_positions:
@@ -741,7 +717,6 @@ def main():
         except Exception as e:
             logger.error(f"manage_step2_entries failed | {e}")
 
-    # اگر با active_only اجرا شد، فقط پوزیشن‌ها رو چک کن و برو
     if len(sys.argv) > 1 and sys.argv[1] == "active_only":
         logger.info("Active-only mode finished.")
         save_state()
@@ -804,7 +779,7 @@ def main():
     logger.info(f"active_positions={len(active_positions)} | saved_whale_orders={len(saved_whale_orders)}")
     logger.info("=" * 60)
 
-    # پیام وضعیت (Heartbeat)
+    # پیام وضعیت
     status_msg = (
         f"🤖 <b>FWP Status</b>\n"
         f"✅ اسکن کامل شد\n"
