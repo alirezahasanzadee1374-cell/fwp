@@ -1,145 +1,186 @@
 {
   "active_positions": {},
   "saved_whale_orders": {
-    "USDCUSDT|bid|1.00088": {
-      "usd": 537904.1557563316,
-      "timestamp": 1793483001.1498995
-    },
-    "USDCUSDT|ask|1.00117": {
-      "usd": 980708.3706518537,
-      "timestamp": 1793483001.1498995
-    },
-    "USDCUSDT|ask|1.00095": {
-      "usd": 756904.9298369815,
-      "timestamp": 1793483001.1498995
-    },
     "USDCUSDT|bid|1.0005": {
-      "usd": 5380811.289035961,
-      "timestamp": 1793484550.415876
+      "usd": 5380611.175490191,
+      "timestamp": 1793486726.8694808
     },
     "USDCUSDT|bid|1.0006": {
       "usd": 4222945.9492906425,
-      "timestamp": 1793484550.415876
+      "timestamp": 1793486726.8694808
     },
     "USDCUSDT|bid|1.0": {
       "usd": 819946.945232,
-      "timestamp": 1793484550.415876
+      "timestamp": 1793486726.8694808
     },
     "USDCUSDT|bid|1.00021": {
       "usd": 812388.6954852324,
-      "timestamp": 1793484550.415876
+      "timestamp": 1793486726.8694808
     },
-    "USDCUSDT|bid|1.00091": {
-      "usd": 596689.9009662116,
-      "timestamp": 1793484550.415876
+    "USDCUSDT|bid|1.00096": {
+      "usd": 766172.8874692481,
+      "timestamp": 1793486726.8694808
     },
     "USDCUSDT|bid|1.0003": {
       "usd": 569506.8036788634,
-      "timestamp": 1793484550.415876
+      "timestamp": 1793486726.8694808
     },
     "USDCUSDT|bid|1.00062": {
       "usd": 556685.1281742962,
-      "timestamp": 1793484550.415876
+      "timestamp": 1793486726.8694808
     },
     "USDCUSDT|bid|1.0008": {
-      "usd": 508868.30023680953,
-      "timestamp": 1793484550.415876
-    },
-    "USDCUSDT|ask|1.00119": {
-      "usd": 980805.0630488263,
-      "timestamp": 1793484550.415876
+      "usd": 508870.42881531117,
+      "timestamp": 1793486726.8694808
     },
     "USDCUSDT|ask|1.001": {
-      "usd": 957929.8043625308,
-      "timestamp": 1793484550.415876
+      "usd": 1016226.0828179459,
+      "timestamp": 1793486726.8694808
     },
-    "USDCUSDT|ask|1.00099": {
-      "usd": 914357.1150448082,
-      "timestamp": 1793484550.415876
+    "USDCUSDT|ask|1.00123": {
+      "usd": 980671.3789400242,
+      "timestamp": 1793486726.8694808
     },
-    "RLUSDUSDT|bid|1.001": {
-      "usd": 4904793.465572,
-      "timestamp": 1793484692.7554293
+    "RLUSDUSDT|bid|1.0011": {
+      "usd": 4804400.001064801,
+      "timestamp": 1793486908.5869823
     },
     "RLUSDUSDT|bid|1.0007": {
       "usd": 1601136.9988908998,
-      "timestamp": 1793484692.7554293
+      "timestamp": 1793486908.5869823
     },
-    "RLUSDUSDT|bid|1.0009": {
-      "usd": 1000905.8112253998,
-      "timestamp": 1793484692.7554293
+    "RLUSDUSDT|bid|1.001": {
+      "usd": 1099432.016683,
+      "timestamp": 1793486908.5869823
     },
     "RLUSDUSDT|bid|1.0005": {
       "usd": 900494.3891835,
-      "timestamp": 1793484692.7554293
+      "timestamp": 1793486908.5869823
     },
     "RLUSDUSDT|bid|1.0004": {
       "usd": 700282.9691872,
-      "timestamp": 1793484692.7554293
+      "timestamp": 1793486908.5869823
     },
     "RLUSDUSDT|bid|1.0002": {
       "usd": 616175.5074594,
-      "timestamp": 1793484692.7554293
-    },
-    "RLUSDUSDT|ask|1.0012": {
-      "usd": 4008748.1551076,
-      "timestamp": 1793484692.7554293
+      "timestamp": 1793486908.5869823
     },
     "RLUSDUSDT|ask|1.0013": {
-      "usd": 1670975.2505439003,
-      "timestamp": 1793484692.7554293
-    },
-    "RLUSDUSDT|ask|1.0015": {
-      "usd": 1000322.6386030001,
-      "timestamp": 1793484692.7554293
+      "usd": 4674875.250543901,
+      "timestamp": 1793486908.5869823
     },
     "RLUSDUSDT|ask|1.0014": {
-      "usd": 875023.3200000001,
-      "timestamp": 1793484692.7554293
+      "usd": 1776283.32,
+      "timestamp": 1793486908.5869823
+    },
+    "RLUSDUSDT|ask|1.0016": {
+      "usd": 800000.0032768,
+      "timestamp": 1793486908.5869823
+    },
+    "FDUSDUSDT|bid|0.998": {
+      "usd": 619795.0258,
+      "timestamp": 1793487246.394304
+    },
+    "FDUSDUSDT|bid|0.9981": {
+      "usd": 528720.398928,
+      "timestamp": 1793487246.394304
+    },
+    "FDUSDUSDT|ask|0.9991": {
+      "usd": 1295656.598634,
+      "timestamp": 1793487246.394304
+    },
+    "FDUSDUSDT|ask|1000000.0": {
+      "usd": 1230000.0,
+      "timestamp": 1793487246.394304
+    },
+    "FDUSDUSDT|ask|0.9988": {
+      "usd": 1225090.884688,
+      "timestamp": 1793487246.394304
+    },
+    "FDUSDUSDT|ask|0.9989": {
+      "usd": 1016161.6512740001,
+      "timestamp": 1793487246.394304
+    },
+    "FDUSDUSDT|ask|0.9987": {
+      "usd": 883619.8489350001,
+      "timestamp": 1793487246.394304
+    },
+    "FDUSDUSDT|ask|0.999": {
+      "usd": 875373.72003,
+      "timestamp": 1793487246.394304
+    },
+    "FDUSDUSDT|ask|0.9996": {
+      "usd": 793972.7838000001,
+      "timestamp": 1793487246.394304
+    },
+    "FDUSDUSDT|ask|0.9993": {
+      "usd": 771774.809199,
+      "timestamp": 1793487246.394304
+    },
+    "FDUSDUSDT|ask|1.0": {
+      "usd": 633746.7,
+      "timestamp": 1793487246.394304
+    },
+    "FDUSDUSDT|ask|0.9986": {
+      "usd": 514088.2674,
+      "timestamp": 1793487246.394304
     }
   },
   "listed_symbols": [
-    "RLUSDUSDT",
-    "USDCUSDT"
+    "USDCUSDT",
+    "RLUSDUSDT"
   ],
   "saved_oi": {
-    "BTCUSDT": 3461119.4300000207,
+    "BTCUSDT": 3462591.7800000207,
     "USDCUSDT": 92401.0,
-    "ETHUSDT": 6316759.780000017,
-    "SOLUSDT": 3380054.720000002,
-    "ZECUSDT": 11840681.0,
-    "NEARUSDT": 1197910.6,
-    "BNBUSDT": 8135599.0,
-    "UNIUSDT": 6032265.0,
-    "LINKUSDT": 2200069.8000000003,
-    "HYPEUSDT": 12634617.0,
-    "ENAUSDT": 10035202.0,
-    "ZROUSDT": 4552230.0,
-    "SUIUSDT": 31908131.0,
-    "ZAMAUSDT": 4744582.0,
-    "ONDOUSDT": 2699808.0,
-    "CELOUSDT": 5157008.0,
-    "XPLUSDT": 13475091.0,
-    "LTCUSDT": 531216.2,
-    "FETUSDT": 856713.0,
-    "TAOUSDT": 6895277.0,
-    "INJUSDT": 5186003.0,
+    "ETHUSDT": 6334711.1800000165,
+    "SOLUSDT": 3373817.3700000024,
+    "ZECUSDT": 11833531.0,
+    "NEARUSDT": 1199903.5,
+    "BNBUSDT": 8135644.0,
+    "UNIUSDT": 6034805.0,
+    "LINKUSDT": 2216928.2,
+    "HYPEUSDT": 12644725.0,
+    "ENAUSDT": 10054960.0,
+    "ZROUSDT": 4562618.0,
+    "SUIUSDT": 31889027.0,
+    "ZAMAUSDT": 4752508.0,
+    "ONDOUSDT": 2699202.0,
+    "CELOUSDT": 5153976.0,
+    "XPLUSDT": 13475244.0,
+    "LTCUSDT": 531297.1,
+    "FETUSDT": 855876.0,
+    "TAOUSDT": 6889396.0,
+    "INJUSDT": 5204696.0,
     "RSRUSDT": 11542563.0,
-    "OPUSDT": 42488510.0,
-    "ASTERUSDT": 14366054.0,
-    "MORPHOUSDT": 1722928.0,
-    "ARBUSDT": 8579738.899999999,
-    "PENDLEUSDT": 1626721.0,
-    "TIAUSDT": 12274265.0,
-    "GRAMUSDT": 7095251.0,
-    "SPKUSDT": 431921.0,
-    "XLMUSDT": 494668.99999999994,
-    "PENGUUSDT": 9103449.0,
-    "POLUSDT": 6124164.0,
-    "FILUSDT": 150104063.0,
-    "DASHUSDT": 6367049.0,
+    "OPUSDT": 42321145.0,
+    "ASTERUSDT": 14362948.0,
+    "MORPHOUSDT": 1718754.0,
+    "ARBUSDT": 8564583.299999999,
+    "PENDLEUSDT": 1625689.0,
+    "TIAUSDT": 12289847.0,
+    "GRAMUSDT": 7081325.0,
+    "SPKUSDT": 432205.0,
+    "XLMUSDT": 494096.49999999994,
+    "PENGUUSDT": 9116752.0,
+    "POLUSDT": 6079794.0,
+    "FILUSDT": 150193951.0,
+    "DASHUSDT": 6380317.0,
     "TRXUSDT": 84588.42000000001,
-    "XRPUSDT": 809476.1100000001
+    "XRPUSDT": 809476.1100000001,
+    "QNTUSDT": 9614.1,
+    "PROMUSDT": 2047658.0,
+    "XAUTUSDT": 16222.267,
+    "RUNEUSDT": 10762954.0,
+    "COWUSDT": 27625526.0,
+    "PAXGUSDT": 27199.915,
+    "REDUSDT": 21037252.0,
+    "ERAUSDT": 67342122.0,
+    "REZUSDT": 842023581.0,
+    "EDENUSDT": 8939259.0,
+    "ZBTUSDT": 5289746.0,
+    "HYPERUSDT": 33612371.0,
+    "RAREUSDT": 106789820.0
   },
-  "last_updated": 1793486304.9668705
+  "last_updated": 1793487569.7875943
 }
