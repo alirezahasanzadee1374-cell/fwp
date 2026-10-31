@@ -131,8 +131,8 @@
     }
   },
   "listed_symbols": [
-    "USDCUSDT",
-    "RLUSDUSDT"
+    "RLUSDUSDT",
+    "USDCUSDT"
   ],
   "saved_oi": {
     "BTCUSDT": 3463056.2000000207,
@@ -186,5 +186,5 @@
     "HYPERUSDT": 33612371.0,
     "RAREUSDT": 106789820.0
   },
-  "last_updated": 1793489442.3855855
+  "last_updated": 1793490135.7074416
 }
