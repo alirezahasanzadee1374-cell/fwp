@@ -1,16 +1,6 @@
 """
 data_fetcher.py — فقط دریافت دیتا برای پروژه FWP
 هیچ منطق معامله‌ای اینجا نیست. فقط دیتا.
-
-توابع:
-  ۱. get_klines           — کندل OHLCV (fallback: binance → bybit → okx)
-  ۲. get_order_book       — اردربوک تک‌صرافی (fallback سه‌مرحله‌ای)
-  ۳. get_open_interest    — OI (fallback: binance → bybit)
-  ۴. get_funding_rate     — فاندینگ (fallback: binance → bybit)
-  ۵. get_market_cap       — مارکت‌کپ CoinGecko (با کش ۵ دقیقه + retry 429)
-  ۶. get_news_rss         — اخبار RSS
-  ۷. get_order_book_all_exchanges — اردربوک چندصرافی + هم‌پوشانی
-  ۸. get_klines_1m        — کندل ۱ دقیقه
 """
 
 import time
@@ -170,10 +160,28 @@ def get_klines(symbol: str, interval: str = "4h", limit: int = 300) -> Optional[
 
 
 # ============================================================
-# ۲. اردربوک تک‌صرافی
+# ۲. اردربوک تک‌صرافی (OKX اول)
 # ============================================================
 def get_order_book(symbol: str, limit: int = 100) -> Optional[dict]:
-    """اردربوک از یک صرافی (بایننس → بای‌بیت → اوکی‌اکس)."""
+    """اردربوک از یک صرافی (OKX اول، چون از IP گیت‌هاب جواب می‌ده)."""
+
+    # ---- OKX ----
+    try:
+        url = f"{OKX_BASE}/api/v5/market/books"
+        params = {"instId": _to_okx_symbol(symbol), "sz": limit}
+        r = requests.get(url, params=params, timeout=TIMEOUT)
+        r.raise_for_status()
+        js = r.json()
+        raw = js.get("data", [])
+        if raw:
+            res = raw[0]
+            bids = [[float(p), float(q)] for p, q, *_ in res.get("bids", [])]
+            asks = [[float(p), float(q)] for p, q, *_ in res.get("asks", [])]
+            if bids or asks:
+                logger.info(f"get_order_book OK (okx) | {symbol} | bids={len(bids)} asks={len(asks)}")
+                return {"bids": bids, "asks": asks}
+    except Exception as e:
+        logger.warning(f"get_order_book okx failed | {symbol} | {e}")
 
     # ---- بایننس ----
     try:
@@ -204,36 +212,35 @@ def get_order_book(symbol: str, limit: int = 100) -> Optional[dict]:
             logger.info(f"get_order_book OK (bybit) | {symbol} | bids={len(bids)} asks={len(asks)}")
             return {"bids": bids, "asks": asks}
     except Exception as e:
-        logger.warning(f"get_order_book bybit failed | {symbol} | {e}")
-
-    # ---- اوکی‌اکس ----
-    try:
-        url = f"{OKX_BASE}/api/v5/market/books"
-        params = {"instId": _to_okx_symbol(symbol), "sz": limit}
-        r = requests.get(url, params=params, timeout=TIMEOUT)
-        r.raise_for_status()
-        js = r.json()
-        raw = js.get("data", [])
-        if raw:
-            res = raw[0]
-            bids = [[float(p), float(q)] for p, q, *_ in res.get("bids", [])]
-            asks = [[float(p), float(q)] for p, q, *_ in res.get("asks", [])]
-            if bids or asks:
-                logger.info(f"get_order_book OK (okx) | {symbol} | bids={len(bids)} asks={len(asks)}")
-                return {"bids": bids, "asks": asks}
-    except Exception as e:
-        logger.error(f"get_order_book okx failed | {symbol} | {e}")
+        logger.error(f"get_order_book bybit failed | {symbol} | {e}")
 
     logger.error(f"get_order_book ALL FAILED | {symbol}")
     return None
 
 
 # ============================================================
-# ۳. OI
+# ۳. OI (OKX اول)
 # ============================================================
 def get_open_interest(symbol: str) -> Optional[float]:
-    """OI از بایننس → بای‌بیت."""
+    """OI (OKX اول)."""
 
+    # ---- OKX ----
+    try:
+        url = f"{OKX_BASE}/api/v5/public/open-interest"
+        params = {"instType": "SWAP", "instId": _to_okx_symbol(symbol) + "-SWAP"}
+        r = requests.get(url, params=params, timeout=TIMEOUT)
+        r.raise_for_status()
+        js = r.json()
+        data = js.get("data", [])
+        if data:
+            oi = float(data[0].get("oi", 0))
+            if oi > 0:
+                logger.info(f"get_open_interest OK (okx) | {symbol} | {oi}")
+                return oi
+    except Exception as e:
+        logger.warning(f"get_open_interest okx failed | {symbol} | {e}")
+
+    # ---- بایننس ----
     try:
         url = f"{BINANCE_FUTURES}/fapi/v1/openInterest"
         params = {"symbol": symbol}
@@ -246,6 +253,7 @@ def get_open_interest(symbol: str) -> Optional[float]:
     except Exception as e:
         logger.warning(f"get_open_interest binance failed | {symbol} | {e}")
 
+    # ---- بای‌بیت ----
     try:
         url = f"{BYBIT_BASE}/v5/market/open-interest"
         params = {"category": "linear", "symbol": symbol}
@@ -298,6 +306,7 @@ def get_funding_rate(symbol: str) -> Optional[float]:
 
     logger.error(f"get_funding_rate ALL FAILED | {symbol}")
     return None
+
 
 # ============================================================
 # ۵. مارکت‌کپ CoinGecko
@@ -399,7 +408,7 @@ def get_news_rss(feed_urls: Optional[list] = None, max_per_feed: int = 20) -> li
 
 
 # ============================================================
-# ۷. اردربوک چندصرافی + هم‌پوشانی (اصلاح باگ used_indices)
+# ۷. اردربوک چندصرافی + هم‌پوشانی (اصلاح OKX)
 # ============================================================
 def get_order_book_all_exchanges(symbol: str, min_wall_usd: float = MIN_WHALE_WALL_USD) -> dict:
     """
@@ -407,9 +416,9 @@ def get_order_book_all_exchanges(symbol: str, min_wall_usd: float = MIN_WHALE_WA
     خروجی: {"walls_by_exchange": {...}, "cross_exchange_overlap": [...]}
     """
     exchanges = {
+        "okx": ccxt.okx({"enableRateLimit": True}),
         "binance": ccxt.binance({"enableRateLimit": True}),
         "bybit": ccxt.bybit({"enableRateLimit": True}),
-        "okx": ccxt.okx({"enableRateLimit": True}),
     }
 
     symbol_ccxt = _to_ccxt_symbol(symbol)
@@ -418,12 +427,21 @@ def get_order_book_all_exchanges(symbol: str, min_wall_usd: float = MIN_WHALE_WA
     for name, ex in exchanges.items():
         try:
             ob = ex.fetch_order_book(symbol_ccxt, limit=100)
-            bids = [w for w in (ob.get("bids") or []) if w[0] * w[1] >= min_wall_usd]
-            asks = [w for w in (ob.get("asks") or []) if w[0] * w[1] >= min_wall_usd]
-            walls_by_exchange[name] = {
-                "bids": [[float(p), float(q)] for p, q in bids],
-                "asks": [[float(p), float(q)] for p, q in asks],
-            }
+            # ✅ اصلاح ساختار OKX: بعضی وقتا bids/asks سه‌تایی می‌آن
+            raw_bids = ob.get("bids") or []
+            raw_asks = ob.get("asks") or []
+            
+            bids = []
+            for w in raw_bids:
+                if len(w) >= 2 and w[0] * w[1] >= min_wall_usd:
+                    bids.append([float(w[0]), float(w[1])])
+                    
+            asks = []
+            for w in raw_asks:
+                if len(w) >= 2 and w[0] * w[1] >= min_wall_usd:
+                    asks.append([float(w[0]), float(w[1])])
+
+            walls_by_exchange[name] = {"bids": bids, "asks": asks}
             logger.info(f"get_order_book_all OK | {name} | bids={len(bids)} asks={len(asks)}")
         except Exception as e:
             logger.warning(f"get_order_book_all failed | {name} | {e}")
@@ -476,71 +494,3 @@ def get_order_book_all_exchanges(symbol: str, min_wall_usd: float = MIN_WHALE_WA
 def get_klines_1m(symbol: str, limit: int = 30) -> Optional[pd.DataFrame]:
     """کندل ۱ دقیقه — از همون get_klines با interval='1m'."""
     return get_klines(symbol=symbol, interval="1m", limit=limit)
-
-
-# ============================================================
-# تست پایانی
-# ============================================================
-if __name__ == "__main__":
-    SYMBOL = "BTCUSDT"
-
-    logger.info("========== تست get_klines (4h) ==========")
-    df = get_klines(SYMBOL, "4h", 300)
-    if df is not None:
-        logger.info(f"OK | shape={df.shape} | last_close={df['close'].iloc[-1]}")
-    else:
-        logger.warning("FAILED")
-
-    logger.info("========== تست get_klines_1m ==========")
-    df1m = get_klines_1m(SYMBOL, 30)
-    if df1m is not None:
-        logger.info(f"OK | shape={df1m.shape} | last_close={df1m['close'].iloc[-1]}")
-    else:
-        logger.warning("FAILED")
-
-    logger.info("========== تست get_order_book ==========")
-    ob = get_order_book(SYMBOL, 50)
-    if ob is not None:
-        logger.info(f"OK | bids={len(ob['bids'])} asks={len(ob['asks'])} | top_bid={ob['bids'][0] if ob['bids'] else None}")
-    else:
-        logger.warning("FAILED")
-
-    logger.info("========== تست get_open_interest ==========")
-    oi = get_open_interest(SYMBOL)
-    if oi is not None:
-        logger.info(f"OI={oi}")
-    else:
-        logger.warning("FAILED")
-
-    logger.info("========== تست get_funding_rate ==========")
-    fr = get_funding_rate(SYMBOL)
-    if fr is not None:
-        logger.info(f"FR={fr}")
-    else:
-        logger.warning("FAILED")
-
-    logger.info("========== تست get_market_cap ==========")
-    mc = get_market_cap(SYMBOL)
-    if mc is not None:
-        logger.info(f"MC={mc}")
-    else:
-        logger.warning("FAILED")
-
-    logger.info("========== تست get_news_rss ==========")
-    news = get_news_rss()
-    if news:
-        logger.info(f"news_count={len(news)}")
-        logger.info(f"sample={news[0]['title'][:80]}")
-    else:
-        logger.warning("FAILED")
-
-    logger.info("========== تست get_order_book_all_exchanges ==========")
-    ob_all = get_order_book_all_exchanges(SYMBOL)
-    if ob_all:
-        logger.info(f"exchanges={list(ob_all['walls_by_exchange'].keys())} | overlaps={len(ob_all['cross_exchange_overlap'])}")
-        for ov in ob_all["cross_exchange_overlap"]:
-            logger.info(f"OVERLAP | {ov['side']} | {ov['exchanges']} | range={ov['price_range']} | usd={ov['total_usd']:.0f}")
-    else:
-        logger.warning("FAILED")
-
-    logger.info("========== تست‌ها تمام شد ==========")
