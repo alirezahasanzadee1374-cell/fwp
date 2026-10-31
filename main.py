@@ -325,7 +325,7 @@ def detect_listing(symbol: str, whale_walls: dict) -> Optional[dict]:
 def is_meme_coin(symbol: str) -> bool:
     base = symbol.replace("USDT", "").upper()
     return base in [m.upper() for m in MEME_COINS_WHITELIST]
-# ============================================================
+    # ============================================================
 # ۹. تحلیل یک ارز
 # ============================================================
 def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_module):
@@ -819,6 +819,17 @@ def main():
     logger.info(f"FWP cycle finished | duration={duration:.1f}s | signals={signals_found}")
     logger.info(f"active_positions={len(active_positions)} | saved_whale_orders={len(saved_whale_orders)}")
     logger.info("=" * 60)
+
+    # ✅ ارسال پیام وضعیت (Heartbeat) به تلگرام
+    status_msg = (
+        f"🤖 <b>FWP Status</b>\n"
+        f"✅ اسکن کامل شد\n"
+        f"⏱ مدت زمان: {duration:.0f} ثانیه\n"
+        f"📊 ارزهای بررسی‌شده: {len(symbols_to_scan)}\n"
+        f"🚀 سیگنال‌های پیدا شده: {signals_found}\n"
+        f"📈 پوزیشن‌های فعال: {len(active_positions)}\n"
+    )
+    send_telegram(status_msg, priority="profit_update")
 
     try:
         tmp_path = os.path.join(tempfile.gettempdir(), "strategy.py")
