@@ -1,0 +1,6 @@
+ccxt>=4.0.0
+requests>=2.31.0
+pandas>=2.0.0
+feedparser>=6.0.10
+cryptography>=41.0.0
+python-telegram-bot>=20.0

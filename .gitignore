@@ -1,0 +1,46 @@
+# استراتژی اصلی (رمزنگاری‌نشده)
+strategy.py
+
+# فایل‌های حساس
+*.enc
+!strategy.enc
+
+# پایتون
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+
+# محیط
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# سیستم
+.DS_Store
+Thumbs.db
+
+# لاگ
+*.log
+logs/
+
+# دیتابیس محلی
+*.db
+*.sqlite
+*.sqlite3
+
+# کش
+.cache/
+.pytest_cache/
