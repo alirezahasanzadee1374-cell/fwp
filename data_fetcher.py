@@ -1,6 +1,16 @@
 """
 data_fetcher.py — فقط دریافت دیتا برای پروژه FWP
 هیچ منطق معامله‌ای اینجا نیست. فقط دیتا.
+
+توابع:
+  ۱. get_klines           — کندل OHLCV (fallback: binance → bybit → okx)
+  ۲. get_order_book       — اردربوک تک‌صرافی (OKX اول)
+  ۳. get_open_interest    — OI (OKX اول)
+  ۴. get_funding_rate     — فاندینگ (binance → bybit)
+  ۵. get_market_cap       — مارکت‌کپ CoinGecko + fallback بایننس
+  ۶. get_news_rss         — اخبار RSS
+  ۷. get_order_book_all_exchanges — اردربوک چندصرافی (OKX + Kucoin + MEXC)
+  ۸. get_klines_1m        — کندل ۱ دقیقه
 """
 
 import time
@@ -17,6 +27,7 @@ from config import (
     MIN_WHALE_WALL_USD,
     OVERLAP_PRICE_TOLERANCE,
     MIN_OVERLAP_EXCHANGES,
+    OVERLAP_EXCHANGES,
 )
 
 # ---------- تنظیمات logging ----------
@@ -47,7 +58,6 @@ _COINGECKO_CACHE: dict = {
     "ttl": 300,  # ۵ دقیقه
 }
 
-
 # ============================================================
 # توابع کمکی
 # ============================================================
@@ -58,13 +68,11 @@ def _base_asset(symbol: str) -> str:
             return symbol[: -len(quote)]
     return symbol
 
-
 def _to_okx_symbol(symbol: str) -> str:
     """BTCUSDT → BTC-USDT"""
     base = _base_asset(symbol)
     quote = symbol[len(base):]
     return f"{base}-{quote}"
-
 
 def _to_ccxt_symbol(symbol: str) -> str:
     """BTCUSDT → BTC/USDT"""
@@ -72,18 +80,15 @@ def _to_ccxt_symbol(symbol: str) -> str:
     quote = symbol[len(base):]
     return f"{base}/{quote}"
 
-
 def _bybit_interval(interval: str) -> str:
     """4h → 240 | 1d → D | 1m → 1"""
     mapping = {"1m": "1", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "4h": "240", "1d": "D"}
     return mapping.get(interval, "240")
 
-
 def _okx_interval(interval: str) -> str:
     """4h → 4H | 1d → 1D | 1m → 1m"""
     mapping = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1H", "4h": "4H", "1d": "1D"}
     return mapping.get(interval, "4H")
-
 
 # ============================================================
 # ۱. کندل‌ها (OHLCV)
@@ -158,7 +163,6 @@ def get_klines(symbol: str, interval: str = "4h", limit: int = 300) -> Optional[
     logger.error(f"get_klines ALL FAILED | {symbol} | {interval}")
     return None
 
-
 # ============================================================
 # ۲. اردربوک تک‌صرافی (OKX اول)
 # ============================================================
@@ -217,7 +221,6 @@ def get_order_book(symbol: str, limit: int = 100) -> Optional[dict]:
     logger.error(f"get_order_book ALL FAILED | {symbol}")
     return None
 
-
 # ============================================================
 # ۳. OI (OKX اول)
 # ============================================================
@@ -271,7 +274,6 @@ def get_open_interest(symbol: str) -> Optional[float]:
     logger.error(f"get_open_interest ALL FAILED | {symbol}")
     return None
 
-
 # ============================================================
 # ۴. فاندینگ ریت
 # ============================================================
@@ -307,9 +309,8 @@ def get_funding_rate(symbol: str) -> Optional[float]:
     logger.error(f"get_funding_rate ALL FAILED | {symbol}")
     return None
 
-
 # ============================================================
-# ۵. مارکت‌کپ CoinGecko
+# ۵. مارکت‌کپ CoinGecko + fallback از بایننس
 # ============================================================
 def _refresh_coingecko_cache(retry_on_429: bool = True) -> None:
     """پر کردن کش CoinGecko با retry 429."""
@@ -360,9 +361,11 @@ def _refresh_coingecko_cache(retry_on_429: bool = True) -> None:
     except Exception as e:
         logger.error(f"CoinGecko refresh failed | {e}")
 
-
 def get_market_cap(symbol: str) -> Optional[dict]:
-    """مارکت‌کپ و حجم ۲۴ ساعته از CoinGecko."""
+    """
+    مارکت‌کپ و حجم ۲۴ ساعته از CoinGecko.
+    اگه CoinGecko نداشت (خارج از ۲۵۰ کوین اول)، حجم رو از بایننس می‌گیره.
+    """
     _refresh_coingecko_cache()
     cache = _COINGECKO_CACHE["data"] or {}
 
@@ -376,9 +379,27 @@ def get_market_cap(symbol: str) -> Optional[dict]:
             "price": info["price"],
         }
 
-    logger.warning(f"get_market_cap NOT FOUND | {symbol} | base={base}")
-    return None
+    # ---- fallback: از بایننس حجم ۲۴ ساعته ----
+    logger.warning(f"get_market_cap NOT FOUND | {symbol} | base={base} | trying binance fallback")
+    try:
+        vol_url = f"{BINANCE_SPOT_MIRROR}/api/v3/ticker/24hr?symbol={symbol}"
+        vr = requests.get(vol_url, timeout=5)
+        if vr.status_code == 200:
+            vol_data = vr.json()
+            volume_24h = float(vol_data.get("quoteVolume", 0))
+            price = float(vol_data.get("lastPrice", 0))
+            if volume_24h > 0:
+                logger.info(f"get_market_cap OK (binance fallback) | {symbol} | vol24h={volume_24h:.0f}")
+                return {
+                    "market_cap": 0,
+                    "volume_24h": volume_24h,
+                    "price": price,
+                }
+    except Exception as e:
+        logger.warning(f"get_market_cap binance fallback failed | {symbol} | {e}")
 
+    logger.error(f"get_market_cap ALL FAILED | {symbol}")
+    return None
 
 # ============================================================
 # ۶. اخبار RSS
@@ -406,36 +427,40 @@ def get_news_rss(feed_urls: Optional[list] = None, max_per_feed: int = 20) -> li
 
     return results
 
-
 # ============================================================
-# ۷. اردربوک چندصرافی + هم‌پوشانی (اصلاح OKX)
+# ۷. اردربوک چندصرافی + هم‌پوشانی (صرافی‌های جایگزین)
 # ============================================================
 def get_order_book_all_exchanges(symbol: str, min_wall_usd: float = MIN_WHALE_WALL_USD) -> dict:
     """
-    اردربوک از ۳ صرافی + تشخیص هم‌پوشانی بین‌صرافی.
-    خروجی: {"walls_by_exchange": {...}, "cross_exchange_overlap": [...]}
+    اردربوک از صرافی‌هایی که از IP گیت‌هاب جواب می‌دن.
+    OKX + Kucoin + MEXC (بایننس و بای‌بیت بلاک هستن).
     """
-    exchanges = {
+    exchange_names = OVERLAP_EXCHANGES  # ["okx", "kucoin", "mexc"]
+    exchange_instances = {
         "okx": ccxt.okx({"enableRateLimit": True}),
-        "binance": ccxt.binance({"enableRateLimit": True}),
-        "bybit": ccxt.bybit({"enableRateLimit": True}),
+        "kucoin": ccxt.kucoin({"enableRateLimit": True}),
+        "mexc": ccxt.mexc({"enableRateLimit": True}),
+        "gate": ccxt.gate({"enableRateLimit": True}),
+        "bitget": ccxt.bitget({"enableRateLimit": True}),
     }
 
     symbol_ccxt = _to_ccxt_symbol(symbol)
     walls_by_exchange: dict = {}
 
-    for name, ex in exchanges.items():
+    for name in exchange_names:
+        ex = exchange_instances.get(name)
+        if ex is None:
+            continue
         try:
             ob = ex.fetch_order_book(symbol_ccxt, limit=100)
-            # ✅ اصلاح ساختار OKX: بعضی وقتا bids/asks سه‌تایی می‌آن
             raw_bids = ob.get("bids") or []
             raw_asks = ob.get("asks") or []
-            
+
             bids = []
             for w in raw_bids:
                 if len(w) >= 2 and w[0] * w[1] >= min_wall_usd:
                     bids.append([float(w[0]), float(w[1])])
-                    
+
             asks = []
             for w in raw_asks:
                 if len(w) >= 2 and w[0] * w[1] >= min_wall_usd:
@@ -487,10 +512,63 @@ def get_order_book_all_exchanges(symbol: str, min_wall_usd: float = MIN_WHALE_WA
 
     return {"walls_by_exchange": walls_by_exchange, "cross_exchange_overlap": overlap}
 
-
 # ============================================================
 # ۸. کندل ۱ دقیقه
 # ============================================================
 def get_klines_1m(symbol: str, limit: int = 30) -> Optional[pd.DataFrame]:
     """کندل ۱ دقیقه — از همون get_klines با interval='1m'."""
     return get_klines(symbol=symbol, interval="1m", limit=limit)
+
+# ============================================================
+# تست پایانی
+# ============================================================
+if __name__ == "__main__":
+    SYMBOL = "BTCUSDT"
+
+    logger.info("========== تست get_klines (4h) ==========")
+    df = get_klines(SYMBOL, "4h", 300)
+    if df is not None:
+        logger.info(f"OK | shape={df.shape} | last_close={df['close'].iloc[-1]}")
+    else:
+        logger.warning("FAILED")
+
+    logger.info("========== تست get_order_book (تک‌صرافی) ==========")
+    ob = get_order_book(SYMBOL, 50)
+    if ob is not None:
+        logger.info(f"OK | bids={len(ob['bids'])} asks={len(ob['asks'])}")
+    else:
+        logger.warning("FAILED")
+
+    logger.info("========== تست get_open_interest ==========")
+    oi = get_open_interest(SYMBOL)
+    if oi is not None:
+        logger.info(f"OI={oi}")
+    else:
+        logger.warning("FAILED")
+
+    logger.info("========== تست get_market_cap ==========")
+    mc = get_market_cap(SYMBOL)
+    if mc is not None:
+        logger.info(f"MC={mc}")
+    else:
+        logger.warning("FAILED")
+
+    logger.info("========== تست get_news_rss ==========")
+    news = get_news_rss()
+    if news:
+        logger.info(f"news_count={len(news)}")
+    else:
+        logger.warning("FAILED")
+
+    logger.info("========== تست get_order_book_all_exchanges ==========")
+    ob_all = get_order_book_all_exchanges(SYMBOL)
+    if ob_all:
+        logger.info(
+            f"exchanges={list(ob_all['walls_by_exchange'].keys())} | overlaps={len(ob_all['cross_exchange_overlap'])}"
+        )
+        for ov in ob_all["cross_exchange_overlap"]:
+            logger.info(f"OVERLAP | {ov['side']} | {ov['exchanges']} | usd={ov['total_usd']:.0f}")
+    else:
+        logger.warning("FAILED")
+
+    logger.info("========== تست‌ها تمام شد ==========")
