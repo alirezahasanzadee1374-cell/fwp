@@ -219,10 +219,38 @@ def detect_whale_cancel(symbol: str, whale_walls: dict) -> list:
     return cancelled
 
 # ============================================================
-# ۴.۵. تشخیص نهنگ تکراری
+# ۴.۵. تشخیص سفارش در حال پر شدن (قانون ۸ — جدید)
+# ============================================================
+def detect_whale_fill(symbol: str, whale_walls: dict, min_fill_pct: float = 0.10) -> list:
+    """تشخیص سفارش‌های نهنگ که دارن پر می‌شن (قانون ۸)."""
+    if not whale_walls:
+        return []
+
+    filling = []
+    current_bids = {_order_key(symbol, "bid", w["price"]): w["usd"] for w in whale_walls.get("bids", [])}
+    current_asks = {_order_key(symbol, "ask", w["price"]): w["usd"] for w in whale_walls.get("asks", [])}
+
+    for key, old_data in saved_whale_orders.items():
+        if key[0] != symbol:
+            continue
+        current_usd = current_bids.get(key) if key[1] == "bid" else current_asks.get(key)
+        if current_usd is not None and current_usd < old_data["usd"]:
+            fill_pct = (old_data["usd"] - current_usd) / old_data["usd"]
+            if fill_pct >= min_fill_pct:
+                filling.append({
+                    "side": key[1],
+                    "price": key[2],
+                    "old_usd": old_data["usd"],
+                    "current_usd": current_usd,
+                    "fill_pct": fill_pct,
+                })
+
+    return filling
+
+# ============================================================
+# ۴.۶. تشخیص نهنگ تکراری (قانون ۱۰)
 # ============================================================
 def detect_repeat_whale(symbol: str, whale_walls: dict) -> int:
-    """قانون ۱۰: تشخیص نهنگ تکراری."""
     if not whale_walls:
         return 0
 
@@ -237,7 +265,7 @@ def detect_repeat_whale(symbol: str, whale_walls: dict) -> int:
     return matches
 
 # ============================================================
-# ۵. تاییدیه زودهنگام
+# ۵. تاییدیه زودهنگام (قانون ۲۹)
 # ============================================================
 def detect_early_confirmation(symbol: str, current_price: float, whale_walls: dict) -> Optional[dict]:
     if symbol not in active_positions:
@@ -264,7 +292,7 @@ def detect_early_confirmation(symbol: str, current_price: float, whale_walls: di
     return None
 
 # ============================================================
-# ۶. رد پای فروش فوری
+# ۶. رد پای فروش فوری (قانون ۴۳)
 # ============================================================
 def detect_urgent_sell(symbol: str, order_book: dict, current_oi: Optional[float], power: dict) -> Optional[dict]:
     triggers = []
@@ -292,7 +320,7 @@ def detect_urgent_sell(symbol: str, order_book: dict, current_oi: Optional[float
     return None
 
 # ============================================================
-# ۷. شکار لیستینگ
+# ۷. شکار لیستینگ (قانون ۴۸)
 # ============================================================
 def detect_listing(symbol: str, whale_walls: dict) -> Optional[dict]:
     if not LISTING_HUNT_ENABLED:
@@ -308,14 +336,14 @@ def detect_listing(symbol: str, whale_walls: dict) -> Optional[dict]:
     return None
 
 # ============================================================
-# ۸. فیلتر میم‌کوین
+# ۸. فیلتر میم‌کوین (قانون ۱۵)
 # ============================================================
 def is_meme_coin(symbol: str) -> bool:
     base = symbol.replace("USDT", "").upper()
     return base in [m.upper() for m in MEME_COINS_WHITELIST]
-    
+
 # ============================================================
-# ۹. تحلیل یک ارز
+# ۹. تحلیل یک ارز (با ۴ تیک جدید: #۲، #۶، #۷)
 # ============================================================
 def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_module):
     is_meme = is_meme_coin(symbol)
@@ -370,6 +398,23 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
     if balance_shift:
         logger.info(f"balance shift confirmed | {symbol}")
 
+    # ✅ تیک #۶: تشخیص سفارش‌های در حال پر شدن (قانون ۸)
+    filling_orders = detect_whale_fill(symbol, whale_walls)
+    if filling_orders:
+        for f in filling_orders:
+            side_fa = "خرید" if f["side"] == "bid" else "فروش"
+            logger.info(f"whale fill | {symbol} | {side_fa} | {f['fill_pct']*100:.0f}%")
+            send_telegram(
+                f"🟢 <b>سفارش نهنگ داره پر می‌شه</b>\n"
+                f"ارز: {symbol}\n"
+                f"سمت: {side_fa}\n"
+                f"قیمت: {f['price']}\n"
+                f"حجم قبلی: ${f['old_usd']:.0f}\n"
+                f"حجم فعلی: ${f['current_usd']:.0f}\n"
+                f"پر شده: {f['fill_pct']*100:.0f}%",
+                priority="minor_correction"
+            )
+
     # fallback حجم
     if market_cap and market_cap.get("volume_24h", 0) > 0:
         volume_24h = market_cap["volume_24h"]
@@ -386,7 +431,6 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
             volume_24h = 0
 
     whale_power_walls = strategy_module.detect_whale_power(whale_walls, market_cap, volume_24h)
-
     ob_all = data_fetcher_module.get_order_book_all_exchanges(symbol)
     overlap_list = strategy_module.detect_overlap(ob_all) if ob_all else []
 
@@ -397,6 +441,33 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
 
     news_positive = strategy_module.check_news_positive(all_news, symbol)
     news_negative = strategy_module.check_news_negative(all_news, symbol)
+
+    # ✅ تیک #۲: هشدار نهنگ مخالف قبل از ورود (قانون ۲۳)
+    if wall_power["dominant"] == "ask":
+        send_telegram(
+            f"⚠️ <b>نهنگ فروشنده ظاهر شد</b>\n"
+            f"ارز: {symbol}\n"
+            f"قدرت خرید: ${wall_power['bid_power']:.0f}\n"
+            f"قدرت فروش: ${wall_power['ask_power']:.0f}\n"
+            f"اقدام: وارد نشوید",
+            priority="minor_correction"
+        )
+        logger.info(f"ask dominant | {symbol} | bid={wall_power['bid_power']:.0f} ask={wall_power['ask_power']:.0f}")
+        return None
+
+    # ✅ تیک #۷: پیام "ستاپ آماده" (سوخت + زور + جاده)
+    if (bunker and power["winner"] == "buyers" and clear_path.get("clear")):
+        send_telegram(
+            f"🎯 <b>ستاپ آماده شد</b>\n"
+            f"ارز: {symbol}\n"
+            f"تایم‌فریم: {closest_tf}\n"
+            f"سوخت: ${bunker['total_bid_usd']:.0f}\n"
+            f"زور بایر: {power['ratio']:.2f}x\n"
+            f"جاده ۱۰٪: باز\n"
+            f"اقدام: منتظر تایید نهایی",
+            priority="minor_correction"
+        )
+        logger.info(f"setup ready | {symbol} | fuel={bunker['total_bid_usd']:.0f} | power={power['ratio']:.2f}")
 
     signal = strategy_module.generate_signal(
         symbol=symbol,
@@ -463,7 +534,7 @@ def process_signal(signal: dict, current_price: float) -> None:
     )
 
 # ============================================================
-# ۱۱. مدیریت پوزیشن‌های فعال (با priority filter)
+# ۱۱. مدیریت پوزیشن‌های فعال (با تیک #۳ جدید: چک مستمر جاده ۱۰٪)
 # ============================================================
 def manage_active_positions(strategy_module, data_fetcher_module, capital_manager_module, all_news):
     if not active_positions:
@@ -526,6 +597,13 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
                     logger.info(f"fuel exhausted | {symbol}")
                     alerts_buffer.append(("urgent_sell", f"⛽ <b>سوخت شورت تموم شد</b>\nارز: {symbol}\nاقدام: با سود فعلی خارج شوید."))
                     skip_lower = True
+
+        # ✅ تیک #۳: چک مستمر جاده ۱۰٪ (قانون ۲۱)
+        if not skip_lower and order_book:
+            clear_path_check = strategy_module.detect_clear_path(order_book, current_price)
+            if not clear_path_check.get("clear"):
+                logger.info(f"clear path blocked | {symbol}")
+                alerts_buffer.append(("minor_correction", f"🚧 <b>جاده ۱۰٪ بسته شد</b>\nارز: {symbol}\nاقدام: بررسی خروج"))
 
         # ۶. قانون ۳۹: ۴ حالت در ۷٪ ضرر
         if not skip_lower:
@@ -779,7 +857,6 @@ def main():
     logger.info(f"active_positions={len(active_positions)} | saved_whale_orders={len(saved_whale_orders)}")
     logger.info("=" * 60)
 
-    # پیام وضعیت
     status_msg = (
         f"🤖 <b>FWP Status</b>\n"
         f"✅ اسکن کامل شد\n"
