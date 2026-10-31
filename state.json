@@ -99,8 +99,8 @@
     }
   },
   "listed_symbols": [
-    "USDCUSDT",
-    "RLUSDUSDT"
+    "RLUSDUSDT",
+    "USDCUSDT"
   ],
   "saved_oi": {
     "BTCUSDT": 3461119.4300000207,
@@ -141,5 +141,5 @@
     "TRXUSDT": 84588.42000000001,
     "XRPUSDT": 809476.1100000001
   },
-  "last_updated": 1793484999.4462712
+  "last_updated": 1793486304.9668705
 }
