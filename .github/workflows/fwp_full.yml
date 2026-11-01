@@ -1,8 +1,11 @@
 name: FWP Bot - Full Market Scan
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'
+  # کرون داخلی گیت‌هاب غیرفعال شد (چون cron-job.org دقیق‌تر اجرا می‌کنه)
+  # schedule:
+  #   - cron: '*/30 * * * *'
+  
+  # اجازه اجرای دستی و اجرا از طریق cron-job.org
   workflow_dispatch: {}
 
 concurrency:
@@ -34,7 +37,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run FWP full
+      - name: Run FWP full scan
         run: python main.py
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -47,14 +50,14 @@ jobs:
           git config --local user.email "fwp-bot@users.noreply.github.com"
           git config --local user.name "FWP Bot"
           git add state.json 2>/dev/null || true
-          git diff --quiet && git diff --staged --quiet || git commit -m "FWP state update [skip ci]"
+          git diff --quiet && git diff --staged --quiet || git commit -m "FWP full state update [skip ci]"
           git push || true
 
       - name: Upload logs (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: fwp-logs
+          name: fwp-full-logs
           path: |
             *.log
           retention-days: 7
