@@ -1,0 +1,52 @@
+name: LPD - Launchpad Scan
+
+on:
+  schedule:
+    # اسکن کامل هر ۳۰ دقیقه
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: lpd-scan
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  run-lpd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run LPD Full Scan
+        run: python -m lpd.main_lpd
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MASTER_KEY: ${{ secrets.MASTER_KEY }}
+
+      - name: Commit LPD State
+        if: always()
+        run: |
+          git config --local user.email "fwp-bot@users.noreply.github.com"
+          git config --local user.name "FWP Bot"
+          git add lpd_state.json 2>/dev/null || true
+          git diff --quiet && git diff --staged --quiet || git commit -m "LPD state update [skip ci]"
+          for i in 1 2 3; do
+            git pull --rebase origin main 2>/dev/null && git push 2>/dev/null && break
+            sleep 2
+          done
