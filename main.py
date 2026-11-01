@@ -40,7 +40,8 @@ from config import (
     MINOR_CORRECTION_MAX_SELLER_RATIO,
     SMART_TARGET_MIN_WALL_PCT,
     ALERT_PRIORITY,
-    STABLECOIN_BLACKLIST,  # ✅ جدید
+    STABLECOIN_BLACKLIST,
+    STOCK_TOKEN_BLACKLIST,  # ✅ جدید
 )
 
 # ---------- Logging ----------
@@ -313,7 +314,7 @@ def detect_urgent_sell(symbol: str, order_book: dict, current_oi: Optional[float
                 if key not in saved_whale_orders:
                     triggers.append(f"new ask wall ${p*q:.0f}")
 
-    # ✅ قانون ۴۳: Whale Tape — فشار فروش نهنگ‌ها
+    # قانون ۴۳: Whale Tape — فشار فروش نهنگ‌ها
     if data_fetcher_module:
         try:
             wf = data_fetcher_module.get_whale_flow(symbol, hours=1)
@@ -349,19 +350,28 @@ def is_meme_coin(symbol: str) -> bool:
     return base in [m.upper() for m in MEME_COINS_WHITELIST]
 
 # ============================================================
-# ✅ ۸.۵. فیلتر استیبل‌کوین (قانون ۴۵ — نویز صفر)
+# ۸.۵. فیلتر استیبل‌کوین (قانون ۴۵ — نویز صفر)
 # ============================================================
 def is_stablecoin(symbol: str) -> bool:
     """چک می‌کنه آیا ارز استیبل‌کوین یا pegged هست (نباید سیگنال بده)"""
     base = symbol.replace("USDT", "").upper()
     return base in STABLECOIN_BLACKLIST
 
+# ✅ جدید: فیلتر توکن‌های سهام و RWA
+def is_stock_token(symbol: str) -> bool:
+    """چک می‌کنه آیا ارز توکن سهام یا RWA هست (نباید سیگنال بده)"""
+    base = symbol.replace("USDT", "").upper()
+    return base in STOCK_TOKEN_BLACKLIST
+
 # ============================================================
 # ۹. تحلیل یک ارز
 # ============================================================
 def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_module):
-    # ✅ فیلتر استیبل‌کوین‌ها (FDUSD، USDC، RLUSD، ...)
+    # فیلتر استیبل‌کوین‌ها (FDUSD، USDC، RLUSD، ...)
     if is_stablecoin(symbol):
+        return None
+    # ✅ فیلتر توکن‌های سهام (NVDAB، MSTRB، INTCB، ...)
+    if is_stock_token(symbol):
         return None
 
     is_meme = is_meme_coin(symbol)
@@ -487,7 +497,7 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
             return None
         update_saved_whale_orders(symbol, whale_walls, time.time())
 
-    # ✅ قانون ۱۶: تایید Whale Tape برای پلاتینیوم (آلت‌کوین‌ها)
+    # قانون ۱۶: تایید Whale Tape برای پلاتینیوم (آلت‌کوین‌ها)
     if signal and signal.get("type") == "platinum":
         wf = data_fetcher_module.get_whale_flow(symbol, hours=1)
         if wf and wf.get("pressure") == "sell" and wf.get("sell_usd", 0) > 100_000:
@@ -586,7 +596,6 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
             current_oi = data_fetcher_module.get_open_interest(symbol)
             power = strategy_module.calculate_power(order_book, current_price) if order_book else {"winner": "none", "ratio": 0}
 
-            # ✅ قانون ۴۳: پاس دادن data_fetcher_module برای Whale Tape
             urgent = detect_urgent_sell(symbol, order_book, current_oi, power, data_fetcher_module)
             if urgent:
                 alerts_buffer.append(("urgent_sell", f"🚨 <b>رد پای فروش!</b>\nارز: {symbol}\nنشانه‌ها: {', '.join(urgent['triggers'])}\nاقدام: خروج!"))
@@ -601,7 +610,7 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
                     alerts_buffer.append(("urgent_sell", f"⛽ <b>سوخت شورت تموم شد</b>\nارز: {symbol}\nاقدام: با سود فعلی خارج شوید."))
                     skip_lower = True
 
-        # ✅ قانون ۲۲: ByKaranteli — لیکویید واقعی شورت‌ها
+        # قانون ۲۲: ByKaranteli — لیکویید واقعی شورت‌ها
         if not skip_lower:
             try:
                 liq_state = data_fetcher_module.get_liquidation_data(symbol)
