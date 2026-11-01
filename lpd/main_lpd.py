@@ -1,16 +1,18 @@
 """
 main_lpd.py — اجراکننده اصلی پروژه LPD (سکوی پرتاب)
+با قابلیت مدیریت لیست تمرکز (Focus List) و ذخیره‌سازی استیت
 """
 
 import os
 import sys
 import time
+import json
 import base64
 import hashlib
 import logging
 import importlib
 import tempfile
-from typing import Optional
+from typing import Optional, List, Dict
 
 import requests
 import pandas as pd
@@ -28,6 +30,7 @@ from lpd.lpd_config import (
     ORDER_BOOK_EXCHANGES,
     MAX_FOCUS_LIST_SIZE,
     ALERT_DISTANCE_PCT,
+    LPD_STATE_FILE,
 )
 
 # ---------- Logging ----------
@@ -41,9 +44,7 @@ logger = logging.getLogger("LPD.Main")
 # 🔐 رمزگشایی استراتژی LPD
 # ============================================================
 def load_lpd_strategy():
-    """فایل lpd_strategy.enc رو رمزگشایی و ایمپورت می‌کنه"""
     from cryptography.fernet import Fernet
-    
     enc_path = os.path.join(ROOT_DIR, "lpd", "lpd_strategy.enc")
     
     if not os.path.exists(enc_path):
@@ -66,7 +67,6 @@ def load_lpd_strategy():
         logger.error(f"decryption failed: {e}")
         sys.exit(1)
         
-    # ذخیره تو حافظه موقت سرور گیت‌هاب
     tmp_dir = tempfile.gettempdir()
     tmp_path = os.path.join(tmp_dir, "lpd_strategy.py")
     
@@ -82,29 +82,41 @@ def load_lpd_strategy():
     return strategy_module
 
 # ============================================================
+# ذخیره و لود استیت (لیست تمرکز)
+# ============================================================
+def load_state() -> dict:
+    if os.path.exists(LPD_STATE_FILE):
+        try:
+            with open(LPD_STATE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"load state failed | {e}")
+    return {"focus_list": {}}
+
+def save_state(state: dict):
+    try:
+        with open(LPD_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        logger.info(f"state saved | {len(state.get('focus_list', {}))} symbols in focus list")
+    except Exception as e:
+        logger.error(f"save state failed | {e}")
+
+# ============================================================
 # تلگرام
 # ============================================================
 def send_telegram(message: str) -> bool:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.warning("telegram credentials missing")
         return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        r = requests.post(url, json=payload, timeout=10)
-        r.raise_for_status()
+        requests.post(url, json=payload, timeout=10)
         return True
-    except Exception as e:
-        logger.error(f"telegram failed | {e}")
+    except Exception:
         return False
 
 # ============================================================
-# لیست سفید توبیت (فقط ارزهای اسپات USDT)
+# لیست سفید توبیت
 # ============================================================
 def load_toobit_whitelist() -> set:
     url = "https://api.toobit.com/api/v1/exchangeInfo"
@@ -114,22 +126,17 @@ def load_toobit_whitelist() -> set:
         data = r.json()
         symbols = set()
         for s in data.get("symbols", []):
-            if s.get("status") != "TRADING":
-                continue
+            if s.get("status") != "TRADING": continue
             sym = s.get("symbol", "")
-            if not sym.endswith("USDT"):
-                continue
-            if sym.endswith("ONUSDT") or sym.endswith("XUSDT") or sym.endswith("USDC"):
-                continue
+            if not sym.endswith("USDT"): continue
+            if sym.endswith("ONUSDT") or sym.endswith("XUSDT") or sym.endswith("USDC"): continue
             symbols.add(sym)
-        logger.info(f"toobit whitelist loaded | {len(symbols)} symbols")
         return symbols
-    except Exception as e:
-        logger.error(f"toobit whitelist failed | {e}")
+    except Exception:
         return set()
 
 # ============================================================
-# انتخاب ۱۰۰ ارز برتر (بین لیست سفید توبیت)
+# انتخاب ۱۰۰ ارز برتر
 # ============================================================
 def get_top_symbols(whitelist: set, limit: int = 100) -> list:
     url = "https://data-api.binance.vision/api/v3/ticker/24hr"
@@ -137,211 +144,172 @@ def get_top_symbols(whitelist: set, limit: int = 100) -> list:
         r = requests.get(url, timeout=15)
         r.raise_for_status()
         tickers = r.json()
-        volumes = {}
-        for t in tickers:
-            sym = t.get("symbol", "")
-            if sym in whitelist:
-                try:
-                    volumes[sym] = float(t.get("quoteVolume", 0))
-                except (ValueError, TypeError):
-                    volumes[sym] = 0.0
+        volumes = {t["symbol"]: float(t.get("quoteVolume", 0)) for t in tickers if t.get("symbol") in whitelist}
         sorted_syms = sorted(volumes.items(), key=lambda x: x[1], reverse=True)
-        top = [s for s, _ in sorted_syms[:limit]]
-        logger.info(f"top symbols selected | {len(top)}")
-        return top
-    except Exception as e:
-        logger.error(f"top symbols failed | {e}")
+        return [s for s, _ in sorted_syms[:limit]]
+    except Exception:
         return []
 
 # ============================================================
-# کندل‌ها (از میرور بایننس)
+# دریافت کندل و اردربوک
 # ============================================================
 def fetch_klines(symbol: str, interval: str, limit: int = 300) -> Optional[pd.DataFrame]:
     url = "https://data-api.binance.vision/api/v3/klines"
-    params = {"symbol": symbol, "interval": interval, "limit": limit}
     try:
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
+        r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
         data = r.json()
-        if not data:
-            return None
-        df = pd.DataFrame(
-            data,
-            columns=[
-                "time", "open", "high", "low", "close", "volume",
-                "close_time", "qav", "trades", "taker_base", "taker_quote", "ignore",
-            ],
-        )
+        if not data: return None
+        df = pd.DataFrame(data, columns=["time", "open", "high", "low", "close", "volume", "close_time", "qav", "trades", "taker_base", "taker_quote", "ignore"])
         df = df[["time", "open", "high", "low", "close", "volume"]]
-        for c in ["open", "high", "low", "close", "volume"]:
-            df[c] = df[c].astype(float)
+        for c in ["open", "high", "low", "close", "volume"]: df[c] = df[c].astype(float)
         return df
-    except Exception as e:
-        logger.warning(f"klines failed | {symbol} | {e}")
-        return None
-
-# ============================================================
-# اردربوک: OKX / Bybit (پروکسی) / MEXC
-# ============================================================
-def fetch_order_book_okx(symbol: str) -> Optional[dict]:
-    base = symbol[:-4] if symbol.endswith("USDT") else symbol
-    inst = f"{base}-USDT"
-    url = "https://www.okx.com/api/v5/market/books"
-    params = {"instId": inst, "sz": 100}
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        js = r.json()
-        raw = js.get("data", [])
-        if not raw:
-            return None
-        res = raw[0]
-        bids = [[float(p), float(q)] for p, q, *_ in res.get("bids", [])]
-        asks = [[float(p), float(q)] for p, q, *_ in res.get("asks", [])]
-        if bids or asks:
-            logger.info(f"order book OK (okx) | {symbol}")
-            return {"bids": bids, "asks": asks}
     except Exception:
         return None
-    return None
-
-def fetch_order_book_bybit_proxy(symbol: str) -> Optional[dict]:
-    url = f"{BYBIT_PROXY_URL}/v5/market/orderbook"
-    params = {"category": "linear", "symbol": symbol, "limit": 100}
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        js = r.json()
-        if js.get("retCode") != 0:
-            return None
-        res = js.get("result", {})
-        bids = [[float(p), float(q)] for p, q in res.get("b", [])]
-        asks = [[float(p), float(q)] for p, q in res.get("a", [])]
-        if bids or asks:
-            logger.info(f"order book OK (bybit proxy) | {symbol}")
-            return {"bids": bids, "asks": asks}
-    except Exception:
-        return None
-    return None
-
-def fetch_order_book_mexc(symbol: str) -> Optional[dict]:
-    url = "https://api.mexc.com/api/v3/depth"
-    params = {"symbol": symbol, "limit": 100}
-    try:
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        js = r.json()
-        bids = [[float(p), float(q)] for p, q in js.get("bids", [])]
-        asks = [[float(p), float(q)] for p, q in js.get("asks", [])]
-        if bids or asks:
-            logger.info(f"order book OK (mexc) | {symbol}")
-            return {"bids": bids, "asks": asks}
-    except Exception:
-        return None
-    return None
 
 def fetch_order_book(symbol: str) -> Optional[dict]:
-    for ex in ORDER_BOOK_EXCHANGES:
-        if ex == "okx":
-            ob = fetch_order_book_okx(symbol)
-        elif ex == "bybit":
-            ob = fetch_order_book_bybit_proxy(symbol)
-        elif ex == "mexc":
-            ob = fetch_order_book_mexc(symbol)
-        else:
-            ob = None
-        if ob:
-            return ob
+    # OKX
+    try:
+        base = symbol[:-4]
+        r = requests.get("https://www.okx.com/api/v5/market/books", params={"instId": f"{base}-USDT", "sz": 100}, timeout=5)
+        js = r.json()
+        if js.get("data"):
+            res = js["data"][0]
+            return {"bids": [[float(p), float(q)] for p, q, *_ in res["bids"]], "asks": [[float(p), float(q)] for p, q, *_ in res["asks"]]}
+    except Exception: pass
+    
+    # Bybit (Proxy)
+    try:
+        r = requests.get(f"{BYBIT_PROXY_URL}/v5/market/orderbook", params={"category": "linear", "symbol": symbol, "limit": 100}, timeout=5)
+        js = r.json()
+        if js.get("retCode") == 0 and js.get("result"):
+            res = js["result"]
+            return {"bids": [[float(p), float(q)] for p, q in res["b"]], "asks": [[float(p), float(q)] for p, q in res["a"]]}
+    except Exception: pass
+    
+    # MEXC
+    try:
+        r = requests.get("https://api.mexc.com/api/v3/depth", params={"symbol": symbol, "limit": 100}, timeout=5)
+        js = r.json()
+        if js.get("bids"):
+            return {"bids": [[float(p), float(q)] for p, q in js["bids"]], "asks": [[float(p), float(q)] for p, q in js["asks"]]}
+    except Exception: pass
+    
     return None
 
 # ============================================================
-# تحلیل یک ارز
+# ۱. اسکن کامل (برای پر کردن لیست ۲۰ تایی)
 # ============================================================
-def analyze_symbol(symbol: str, lpd_strategy) -> Optional[dict]:
-    df_4h = fetch_klines(symbol, "4h", 300)
-    df_1d = fetch_klines(symbol, "1d", 300)
-    if df_4h is None or df_1d is None:
-        return None
-    current_price = float(df_4h["close"].iloc[-1])
-    ob = fetch_order_book(symbol)
-    if not ob:
-        return None
-    setup = lpd_strategy.evaluate_lpd_setup(df_4h, df_1d, ob, current_price)
-    if setup:
-        setup["symbol"] = symbol
-        setup["current_price"] = current_price
-    return setup
+def run_full_scan(state: dict, lpd_strategy):
+    logger.info(">>> Starting FULL SCAN to find setups")
+    whitelist = load_toobit_whitelist()
+    symbols = get_top_symbols(whitelist, 100)
+    if not symbols: return
+
+    focus_list = state.get("focus_list", {})
+    new_setups = 0
+
+    for symbol in symbols:
+        try:
+            df_4h = fetch_klines(symbol, "4h", 300)
+            df_1d = fetch_klines(symbol, "1d", 300)
+            if df_4h is None or df_1d is None: continue
+            
+            current_price = float(df_4h["close"].iloc[-1])
+            ob = fetch_order_book(symbol)
+            if not ob: continue
+            
+            setup = lpd_strategy.evaluate_lpd_setup(df_4h, df_1d, ob, current_price)
+            if setup:
+                setup["symbol"] = symbol
+                setup["status"] = "waiting"
+                setup["current_price"] = current_price
+                focus_list[symbol] = setup
+                new_setups += 1
+                logger.info(f"setup found | {symbol} | dist={setup['distance_to_entry']}% | profit={setup['profit_pct']}%")
+        except Exception as e:
+            logger.error(f"scan {symbol} failed | {e}")
+
+        time.sleep(0.1)
+
+    # مرتب کردن و نگه داشتن ۲۰ تای برتر (نزدیک‌ترین به ورود)
+    sorted_focus = sorted(focus_list.items(), key=lambda x: x[1]["distance_to_entry"])
+    top_20 = dict(sorted_focus[:MAX_FOCUS_LIST_SIZE])
+    
+    state["focus_list"] = top_20
+    save_state(state)
+    logger.info(f"FULL SCAN finished | added {new_setups} new setups | total in focus: {len(top_20)}")
 
 # ============================================================
-# ساخت پیام سیگنال
+# ۲. اسکن سریع (پایش لیست ۲۰ تایی)
 # ============================================================
-def format_signal(setup: dict) -> str:
-    return (
-        f"🚀🔥 <b>LPD Setup Ready</b>\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"ارز: {setup['symbol']}\n"
-        f"قیمت فعلی: {setup['current_price']}\n"
-        f"قیمت ورود (OB High): {setup['entry_price']}\n"
-        f"فاصله تا ورود: {setup['distance_to_entry']}%\n"
-        f"🎯 هدف: {setup['target_price']}\n"
-        f"📈 سود بالقوه: {setup['profit_pct']}%\n"
-        f"🐋 قدرت خرید: {setup['bid_power']}x\n"
-        f"⛽ سوخت: {setup['fuel_count']} دیوار خورد\n"
-        f"⏱ تایم: {setup['trend']}\n"
-    )
+def run_active_scan(state: dict):
+    logger.info(">>> Starting ACTIVE SCAN on Focus List")
+    focus_list = state.get("focus_list", {})
+    if not focus_list:
+        logger.info("focus list is empty — skipping")
+        return
+
+    for symbol, setup in list(focus_list.items()):
+        try:
+            # گرفتن قیمت لحظه‌ای
+            df = fetch_klines(symbol, "4h", 5)
+            if df is None: continue
+            current_price = float(df["close"].iloc[-1])
+            entry_price = setup["entry_price"]
+            
+            # فاصله تا ورود
+            dist = abs(current_price - entry_price) / entry_price
+            
+            # ۱. هشدار ۱٪
+            if dist <= ALERT_DISTANCE_PCT and setup["status"] == "waiting":
+                msg = (
+                    f"⏳ <b>LPD Ready Alert</b>\n"
+                    f"ارز: {symbol}\n"
+                    f"قیمت فعلی: {current_price}\n"
+                    f"قیمت ورود (OB): {entry_price}\n"
+                    f"فاصله: {round(dist*100, 2)}%\n"
+                    f"🎯 هدف: {setup['target_price']} (سود {setup['profit_pct']}%)"
+                )
+                send_telegram(msg)
+                setup["status"] = "ready"
+                logger.info(f"READY ALERT sent | {symbol} | dist={round(dist*100, 2)}%")
+            
+            # ۲. تریگر ورود (قیمت به OB رسید)
+            elif current_price <= entry_price and setup["status"] == "ready":
+                msg = (
+                    f"🚀🔥 <b>LPD ENTRY SIGNAL</b>\n"
+                    f"ارز: {symbol}\n"
+                    f"قیمت ورود: {current_price}\n"
+                    f"🎯 هدف: {setup['target_price']}\n"
+                    f"📈 سود بالقوه: {setup['profit_pct']}%"
+                )
+                send_telegram(msg)
+                setup["status"] = "entered"
+                logger.info(f"ENTRY SIGNAL sent | {symbol}")
+
+            # ۳. ریست (اگر قیمت خیلی از OB دور شد)
+            if dist > 0.05: # بیشتر از ۵٪ فاصله
+                del focus_list[symbol]
+                logger.info(f"removed from focus list | {symbol} | too far from OB")
+
+        except Exception as e:
+            logger.error(f"active scan {symbol} failed | {e}")
+
+    save_state(state)
 
 # ============================================================
-# اجرای اصلی (یک چرخه)
+# تابع اصلی
 # ============================================================
 def main():
-    logger.info("=" * 50)
-    logger.info("LPD cycle started")
-    logger.info("=" * 50)
-
-    # ۱. رمزگشایی استراتژی
     lpd_strategy = load_lpd_strategy()
-
-    # ۲. لیست سفید توبیت
-    whitelist = load_toobit_whitelist()
-    if not whitelist:
-        logger.error("no whitelist — aborting")
-        return
-
-    # ۳. انتخاب ۱۰۰ ارز برتر
-    symbols = get_top_symbols(whitelist, 100)
-    if not symbols:
-        logger.error("no symbols — aborting")
-        return
-
-    setups_found = 0
-    for i, symbol in enumerate(symbols, 1):
-        try:
-            setup = analyze_symbol(symbol, lpd_strategy)
-            if setup:
-                setups_found += 1
-                send_telegram(format_signal(setup))
-                logger.info(f"LPD setup | {symbol} | profit={setup['profit_pct']}%")
-                if setups_found >= MAX_FOCUS_LIST_SIZE:
-                    break
-        except Exception as e:
-            logger.error(f"analyze {symbol} failed | {e}")
-
-        if i % 20 == 0:
-            logger.info(f"progress | {i}/{len(symbols)} | setups={setups_found}")
-
-        time.sleep(0.2)
-
-    logger.info("=" * 50)
-    logger.info(f"LPD cycle finished | setups={setups_found}")
-    logger.info("=" * 50)
-
-    # پاکسازی فایل موقت استراتژی
-    try:
-        tmp_path = os.path.join(tempfile.gettempdir(), "lpd_strategy.py")
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-    except Exception:
-        pass
+    state = load_state()
+    
+    # اگر آرگومان "active" پاس داده شد، فقط اسکن سریع انجام بده
+    # در غیر این صورت اسکن کامل
+    if len(sys.argv) > 1 and sys.argv[1] == "active":
+        run_active_scan(state)
+    else:
+        run_full_scan(state, lpd_strategy)
 
 if __name__ == "__main__":
     main()
