@@ -1,8 +1,8 @@
-name: LPD - Active Scan
+name: LPD - Active Scan (2min)
 
 on:
   schedule:
-    # اسکن سریع لیست ۲۰ تایی هر ۲ دقیقه
+    # اجرای خودکار هر ۲ دقیقه
     - cron: '*/2 * * * *'
   workflow_dispatch:
 
@@ -28,7 +28,8 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
-      - run: |
+      - name: Install dependencies
+        run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
