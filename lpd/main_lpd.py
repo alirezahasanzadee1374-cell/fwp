@@ -1,5 +1,5 @@
 """
-main_lpd.py — اجراکننده اصلی پروژه LPD (سکوی پرتاب) - نسخه دیباگ کامل
+main_lpd.py — اجراکننده اصلی LPD با منطق چرخشی + اعلان لیست
 """
 
 import os
@@ -16,362 +16,325 @@ from typing import Optional
 import requests
 import pandas as pd
 
-# اضافه کردن روت پروژه به مسیر ایمپورت
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from lpd.lpd_config import (
-    TELEGRAM_BOT_TOKEN,
-    TELEGRAM_CHAT_ID,
-    MASTER_KEY,
-    BYBIT_PROXY_URL,
-    ORDER_BOOK_EXCHANGES,
-    MAX_FOCUS_LIST_SIZE,
-    ALERT_DISTANCE_PCT,
-    LPD_STATE_FILE,
-    SWING_LOOKBACK_4H,
+    TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, MASTER_KEY,
+    BYBIT_PROXY_URL, MAX_FOCUS_LIST_SIZE, ALERT_DISTANCE_PCT,
+    LPD_STATE_FILE, SWING_LOOKBACK_4H,
 )
 
-# ---------- Logging ----------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger("LPD.Main")
 
 # ============================================================
-# 🔐 رمزگشایی استراتژی LPD
+# رمزگشایی استراتژی
 # ============================================================
 def load_lpd_strategy():
     from cryptography.fernet import Fernet
     enc_path = os.path.join(ROOT_DIR, "lpd", "lpd_strategy.enc")
-    
     if not os.path.exists(enc_path):
-        logger.error(f"lpd_strategy.enc not found at {enc_path}")
         sys.exit(1)
-    if not MASTER_KEY:
-        logger.error("MASTER_KEY is empty")
-        sys.exit(1)
-        
     digest = hashlib.sha256(MASTER_KEY.encode("utf-8")).digest()
-    key = base64.urlsafe_b64encode(digest)
-    fernet = Fernet(key)
-    
-    with open(enc_path, "rb") as f:
-        ciphertext = f.read()
-        
-    try:
-        plaintext = fernet.decrypt(ciphertext)
-    except Exception as e:
-        logger.error(f"decryption failed: {e}")
-        sys.exit(1)
-        
-    tmp_dir = tempfile.gettempdir()
-    tmp_path = os.path.join(tmp_dir, "lpd_strategy.py")
-    
+    fernet = Fernet(base64.urlsafe_b64encode(digest))
+    plaintext = fernet.decrypt(open(enc_path, "rb").read())
+    tmp_path = os.path.join(tempfile.gettempdir(), "lpd_strategy.py")
     with open(tmp_path, "wb") as f:
         f.write(plaintext)
-        
-    if tmp_dir not in sys.path:
-        sys.path.insert(0, tmp_dir)
-        
+    sys.path.insert(0, tempfile.gettempdir())
     sys.modules.pop("lpd_strategy", None)
-    strategy_module = importlib.import_module("lpd_strategy")
-    logger.info("lpd_strategy.enc decrypted and loaded successfully")
-    return strategy_module
+    return importlib.import_module("lpd_strategy")
 
 # ============================================================
-# حافظه (State)
+# استیت
 # ============================================================
 def load_state() -> dict:
     if os.path.exists(LPD_STATE_FILE):
         try:
-            with open(LPD_STATE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"load state failed | {e}")
-    return {"focus_list": {}}
+            return json.load(open(LPD_STATE_FILE, "r", encoding="utf-8"))
+        except: pass
+    return {"focus_list": {}, "scan_index": 0, "active_position": None}
 
 def save_state(state: dict):
     try:
         with open(LPD_STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
-        logger.info(f"state saved | {len(state.get('focus_list', {}))} symbols in focus list")
+        logger.info(f"state saved | focus={len(state.get('focus_list', {}))} | active={bool(state.get('active_position'))} | scan_idx={state.get('scan_index', 0)}")
     except Exception as e:
-        logger.error(f"save state failed | {e}")
+        logger.error(f"save failed | {e}")
 
 # ============================================================
 # تلگرام
 # ============================================================
 def send_telegram(message: str) -> bool:
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return False
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: return False
     try:
-        requests.post(url, json=payload, timeout=10)
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                      json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}, timeout=10)
         return True
-    except Exception:
-        return False
+    except: return False
 
 # ============================================================
-# لیست سفید توبیت
+# لیست توبیت + تاپ ۵۰۰
 # ============================================================
 def load_toobit_whitelist() -> set:
-    url = "https://api.toobit.com/api/v1/exchangeInfo"
     try:
-        r = requests.get(url, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        symbols = set()
-        for s in data.get("symbols", []):
-            if s.get("status") != "TRADING": continue
-            sym = s.get("symbol", "")
-            if not sym.endswith("USDT"): continue
-            if sym.endswith("ONUSDT") or sym.endswith("XUSDT") or sym.endswith("USDC"): continue
-            symbols.add(sym)
-        return symbols
-    except Exception as e:
-        logger.error(f"toobit whitelist failed | {e}")
-        return set()
+        data = requests.get("https://api.toobit.com/api/v1/exchangeInfo", timeout=15).json()
+        return {s["symbol"] for s in data.get("symbols", [])
+                if s.get("status") == "TRADING"
+                and s["symbol"].endswith("USDT")
+                and not s["symbol"].endswith("ONUSDT")
+                and not s["symbol"].endswith("XUSDT")
+                and not s["symbol"].endswith("USDC")}
+    except: return set()
 
-# ============================================================
-# انتخاب ۱۰۰ ارز برتر
-# ============================================================
-def get_top_symbols(whitelist: set, limit: int = 100) -> list:
-    url = "https://data-api.binance.vision/api/v3/ticker/24hr"
+def get_top_symbols(whitelist: set, limit: int = 500) -> list:
     try:
-        r = requests.get(url, timeout=15)
-        r.raise_for_status()
-        tickers = r.json()
+        tickers = requests.get("https://data-api.binance.vision/api/v3/ticker/24hr", timeout=15).json()
         volumes = {t["symbol"]: float(t.get("quoteVolume", 0)) for t in tickers if t.get("symbol") in whitelist}
         sorted_syms = sorted(volumes.items(), key=lambda x: x[1], reverse=True)
         return [s for s, _ in sorted_syms[:limit]]
-    except Exception as e:
-        logger.error(f"top symbols failed | {e}")
-        return []
+    except: return []
 
 # ============================================================
 # دریافت کندل و اردربوک
 # ============================================================
-def fetch_klines(symbol: str, interval: str, limit: int = 300) -> Optional[pd.DataFrame]:
-    url = "https://data-api.binance.vision/api/v3/klines"
+def fetch_klines(symbol, interval, limit=300):
     try:
-        r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
-        r.raise_for_status()
-        data = r.json()
+        data = requests.get("https://data-api.binance.vision/api/v3/klines",
+                            params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10).json()
         if not data: return None
-        df = pd.DataFrame(data, columns=["time", "open", "high", "low", "close", "volume", "close_time", "qav", "trades", "taker_base", "taker_quote", "ignore"])
-        df = df[["time", "open", "high", "low", "close", "volume"]]
+        df = pd.DataFrame(data, columns=["time", "open", "high", "low", "close", "volume", "close_time", "qav", "trades", "taker_base", "taker_quote", "ignore"])[["time", "open", "high", "low", "close", "volume"]]
         for c in ["open", "high", "low", "close", "volume"]: df[c] = df[c].astype(float)
         return df
-    except Exception:
-        return None
+    except: return None
 
-def fetch_order_book(symbol: str) -> Optional[dict]:
-    # OKX
+def fetch_order_book(symbol):
     try:
         base = symbol[:-4]
-        r = requests.get("https://www.okx.com/api/v5/market/books", params={"instId": f"{base}-USDT", "sz": 100}, timeout=5)
-        js = r.json()
+        js = requests.get("https://www.okx.com/api/v5/market/books", params={"instId": f"{base}-USDT", "sz": 100}, timeout=5).json()
         if js.get("data"):
             res = js["data"][0]
             return {"bids": [[float(p), float(q)] for p, q, *_ in res["bids"]], "asks": [[float(p), float(q)] for p, q, *_ in res["asks"]]}
-    except Exception: pass
-    
-    # Bybit (Proxy)
+    except: pass
     try:
-        r = requests.get(f"{BYBIT_PROXY_URL}/v5/market/orderbook", params={"category": "linear", "symbol": symbol, "limit": 100}, timeout=5)
-        js = r.json()
+        js = requests.get(f"{BYBIT_PROXY_URL}/v5/market/orderbook", params={"category": "linear", "symbol": symbol, "limit": 100}, timeout=5).json()
         if js.get("retCode") == 0 and js.get("result"):
             res = js["result"]
             return {"bids": [[float(p), float(q)] for p, q in res["b"]], "asks": [[float(p), float(q)] for p, q in res["a"]]}
-    except Exception: pass
-    
-    # MEXC
+    except: pass
     try:
-        r = requests.get("https://api.mexc.com/api/v3/depth", params={"symbol": symbol, "limit": 100}, timeout=5)
-        js = r.json()
+        js = requests.get("https://api.mexc.com/api/v3/depth", params={"symbol": symbol, "limit": 100}, timeout=5).json()
         if js.get("bids"):
             return {"bids": [[float(p), float(q)] for p, q in js["bids"]], "asks": [[float(p), float(q)] for p, q in js["asks"]]}
-    except Exception: pass
-    
+    except: pass
     return None
 
 # ============================================================
-# ۱. اسکن کامل با دیباگ (X-Ray)
+# اسکن کامل (چرخشی)
 # ============================================================
 def run_full_scan(state: dict, lpd_strategy):
-    logger.info(">>> Starting FULL SCAN (DEBUG MODE)")
-    whitelist = load_toobit_whitelist()
-    symbols = get_top_symbols(whitelist, 100)
-    if not symbols: 
-        logger.error("no symbols found")
-        return
-
     focus_list = state.get("focus_list", {})
+    
+    if len(focus_list) >= MAX_FOCUS_LIST_SIZE:
+        logger.info(f"⏸ Focus list full ({len(focus_list)}/{MAX_FOCUS_LIST_SIZE}) — skipping scan")
+        return
+    
+    whitelist = load_toobit_whitelist()
+    all_symbols = get_top_symbols(whitelist, 500)
+    if not all_symbols:
+        logger.error("no symbols available")
+        return
+    
+    scan_idx = state.get("scan_index", 0)
+    if scan_idx >= len(all_symbols):
+        scan_idx = 0
+        logger.info("♻️ All symbols scanned - cycling back")
+    
+    batch = all_symbols[scan_idx:scan_idx+100]
+    logger.info(f"🔍 Scanning batch {scan_idx}-{scan_idx+len(batch)} of {len(all_symbols)} | focus={len(focus_list)}")
+    
     new_setups = 0
-
-    for i, symbol in enumerate(symbols, 1):
+    for i, symbol in enumerate(batch, 1):
+        if symbol in focus_list:
+            continue
+        
         try:
-            df_4h = fetch_klines(symbol, "4h", 300)
-            df_1d = fetch_klines(symbol, "1d", 300)
-            if df_4h is None or df_1d is None: 
-                logger.info(f"❌ {symbol} | data missing (4h or 1d)")
-                continue
+            df_4h = fetch_klines(symbol, "4h")
+            df_1d = fetch_klines(symbol, "1d")
+            if df_4h is None or df_1d is None: continue
             
             current_price = float(df_4h["close"].iloc[-1])
+            setup = lpd_strategy.evaluate_lpd_setup(df_4h, df_1d, fetch_order_book(symbol), current_price)
             
-            # --- شروع دیباگ ---
-            logger.info(f"🔍 {symbol} | price={current_price}")
-            
-            # ۱. روند
-            trend_4h = lpd_strategy.detect_nouveau_trend(df_4h)
-            trend_1d = lpd_strategy.detect_nouveau_trend(df_1d)
-            if not (trend_4h or trend_1d):
-                logger.info(f"   ⛔ rejected: no uptrend (4h={trend_4h}, 1d={trend_1d})")
-                continue
+            if setup:
+                setup["symbol"] = symbol
+                setup["status"] = "waiting"
+                setup["current_price"] = current_price
+                focus_list[symbol] = setup
+                new_setups += 1
+                logger.info(f"⭐ SETUP | {symbol} | profit={setup['profit_pct']}% | dist={setup['distance_to_entry']}%")
                 
-            # ۲. فیبوناچی
-            swing_high, swing_low = lpd_strategy.find_swing_levels(df_4h, SWING_LOOKBACK_4H)
-            is_discount, fib_05 = lpd_strategy.check_discount_zone(current_price, swing_high, swing_low)
-            if not is_discount:
-                logger.info(f"   ⛔ rejected: not in discount (price > fib 0.5 = {fib_05:.8f})")
-                continue
+                # 📢 اعلان تلگرام: اضافه شد به لیست
+                send_telegram(
+                    f"➕ <b>به لیست بررسی اضافه شد</b>\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"ارز: <b>{symbol}</b>\n"
+                    f"💰 قیمت فعلی: {current_price}\n"
+                    f"🎯 قیمت ورود (OB): {setup['entry_price']}\n"
+                    f"📊 فاصله تا ورود: {setup['distance_to_entry']}%\n"
+                    f"📈 هدف: {setup['target_price']} ({setup['profit_pct']}% سود)\n"
+                    f"🐋 قدرت خرید: {setup['bid_power']}x\n"
+                    f"⏱ تایم: {setup['trend']}\n"
+                    f"📋 لیست: {len(focus_list)}/{MAX_FOCUS_LIST_SIZE}"
+                )
                 
-            # ۳. اوردر بلاک
-            ob = lpd_strategy.find_order_block(df_4h)
-            if not ob:
-                logger.info(f"   ⛔ rejected: no order block found")
-                continue
-            ob_high, ob_low = ob
-            
-            # ۴. اردربوک
-            order_book = fetch_order_book(symbol)
-            if not order_book:
-                logger.info(f"   ⛔ rejected: order book unavailable")
-                continue
-            
-            # ۵. تحلیل اردربوک
-            ob_analysis = lpd_strategy.analyze_order_book(order_book, current_price, ob_low, ob_high)
-            if not ob_analysis:
-                logger.info(f"   ⛔ rejected: order book analysis failed")
-                continue
-                
-            # جزئیات تحلیل
-            logger.info(f"   📊 OB={ob_low:.8f}-{ob_high:.8f} | power={ob_analysis['bid_power']}x | whale={ob_analysis['has_whale']} | fuel={ob_analysis['retail_fuel_count']} | barrier={ob_analysis['heavy_barrier_count']}")
-            
-            if not ob_analysis["is_power_valid"]:
-                logger.info(f"   ⛔ rejected: weak power ({ob_analysis['bid_power']}x < 1.5x)")
-                continue
-            if not ob_analysis["has_whale"]:
-                logger.info(f"   ⛔ rejected: no whale wall (bid wall >= $100K)")
-                continue
-            if not ob_analysis["has_fuel"]:
-                logger.info(f"   ⛔ rejected: not enough fuel (retail asks < 2)")
-                continue
-            if not ob_analysis["no_barrier"]:
-                logger.info(f"   ⛔ rejected: heavy barrier in path")
-                continue
-
-            # ۶. سود و فضای پرواز
-            profit_pct, is_valid_target = lpd_strategy.calculate_profit_target(current_price, swing_high)
-            if not is_valid_target:
-                logger.info(f"   ⛔ rejected: target invalid (profit={profit_pct}% < 10.5% or <7%)")
-                continue
-
-            # --- پایان دیباگ ---
-            # همه چیز OK! ستاپ پیدا شد
-            setup = {
-                "symbol": symbol,
-                "type": "LPD_Setup",
-                "entry_price": ob_high,
-                "target_price": swing_high,
-                "profit_pct": profit_pct,
-                "ob_low": ob_low,
-                "ob_high": ob_high,
-                "distance_to_entry": round(abs(current_price - ob_high) / ob_high * 100, 2),
-                "bid_power": ob_analysis["bid_power"],
-                "whale_walls": ob_analysis["whale_walls"],
-                "fuel_count": ob_analysis["retail_fuel_count"],
-                "trend": "4H" if trend_4h else "1D",
-                "status": "waiting",
-                "current_price": current_price,
-            }
-            focus_list[symbol] = setup
-            new_setups += 1
-            logger.info(f"⭐✅ SETUP FOUND | {symbol} | dist={setup['distance_to_entry']}% | profit={profit_pct}%")
-            
+                if len(focus_list) >= MAX_FOCUS_LIST_SIZE:
+                    logger.info(f"🎯 Focus list reached {MAX_FOCUS_LIST_SIZE} — stopping")
+                    send_telegram(f"🎯 <b>لیست تمرکز پر شد!</b>\n{MAX_FOCUS_LIST_SIZE} ارز آماده پایش.\nاسکن جدید متوقف شد.")
+                    break
         except Exception as e:
-            logger.error(f"❌ scan {symbol} crashed | {e}")
-
-        # چاپ پیشرفت هر ۱۰ ارز
+            logger.error(f"scan {symbol} failed | {e}")
+        
         if i % 10 == 0:
-            logger.info(f"=== progress | {i}/{len(symbols)} | setups={new_setups} ===")
-
+            logger.info(f"  progress | {i}/{len(batch)} | total_focus={len(focus_list)} | new={new_setups}")
+        
         time.sleep(0.1)
-
-    # مرتب کردن و نگه داشتن ۲۰ تای برتر
-    sorted_focus = sorted(focus_list.items(), key=lambda x: x[1]["distance_to_entry"])
-    top_20 = dict(sorted_focus[:MAX_FOCUS_LIST_SIZE])
     
-    state["focus_list"] = top_20
+    state["focus_list"] = focus_list
+    state["scan_index"] = scan_idx + 100
     save_state(state)
-    logger.info(f"FULL SCAN finished | added {new_setups} new setups | total in focus: {len(top_20)}")
+    logger.info(f"✅ SCAN finished | +{new_setups} new | total focus={len(focus_list)}/{MAX_FOCUS_LIST_SIZE}")
 
 # ============================================================
-# ۲. اسکن سریع (پایش لیست ۲۰ تایی)
+# اسکن سریع (Active)
 # ============================================================
 def run_active_scan(state: dict):
-    logger.info(">>> Starting ACTIVE SCAN on Focus List")
     focus_list = state.get("focus_list", {})
-    if not focus_list:
-        logger.info("focus list is empty — skipping")
+    active_pos = state.get("active_position")
+    
+    if active_pos:
+        _monitor_active_position(state)
         return
-
+    
+    if not focus_list:
+        logger.info("focus list empty")
+        return
+    
+    logger.info(f"👁 Active scan | {len(focus_list)} symbols")
+    
     for symbol, setup in list(focus_list.items()):
         try:
             df = fetch_klines(symbol, "4h", 5)
             if df is None: continue
             current_price = float(df["close"].iloc[-1])
             entry_price = setup["entry_price"]
-            
             dist = abs(current_price - entry_price) / entry_price
             
+            # هشدار ۱٪
             if dist <= ALERT_DISTANCE_PCT and setup["status"] == "waiting":
-                msg = (
-                    f"⏳ <b>LPD Ready Alert</b>\n"
+                send_telegram(
+                    f"⏳ <b>LPD Ready</b>\n"
                     f"ارز: {symbol}\n"
-                    f"قیمت فعلی: {current_price}\n"
-                    f"قیمت ورود (OB): {entry_price}\n"
-                    f"فاصله: {round(dist*100, 2)}%\n"
-                    f"🎯 هدف: {setup['target_price']} (سود {setup['profit_pct']}%)"
+                    f"قیمت: {current_price}\n"
+                    f"ورود: {entry_price}\n"
+                    f"فاصله: {round(dist*100,2)}%\n"
+                    f"🎯 هدف: {setup['target_price']} ({setup['profit_pct']}%)"
                 )
-                send_telegram(msg)
                 setup["status"] = "ready"
-                logger.info(f"READY ALERT sent | {symbol} | dist={round(dist*100, 2)}%")
+                logger.info(f"⏳ READY | {symbol}")
             
+            # سیگنال ورود
             elif current_price <= entry_price and setup["status"] == "ready":
-                msg = (
-                    f"🚀🔥 <b>LPD ENTRY SIGNAL</b>\n"
+                send_telegram(
+                    f"🚀🔥 <b>LPD ENTRY</b>\n"
                     f"ارز: {symbol}\n"
-                    f"قیمت ورود: {current_price}\n"
+                    f"ورود: {current_price}\n"
                     f"🎯 هدف: {setup['target_price']}\n"
-                    f"📈 سود بالقوه: {setup['profit_pct']}%"
+                    f"📈 سود: {setup['profit_pct']}%"
                 )
-                send_telegram(msg)
-                setup["status"] = "entered"
-                logger.info(f"ENTRY SIGNAL sent | {symbol}")
-
+                state["active_position"] = {
+                    "symbol": symbol,
+                    "entry_price": current_price,
+                    "target_price": setup["target_price"],
+                    "profit_target_pct": setup["profit_pct"],
+                    "entry_time": time.time(),
+                }
+                logger.info(f"🚀 ENTRY | {symbol}")
+                save_state(state)
+                return
+            
+            # ریست (خیلی دور شد)
             if dist > 0.05:
                 del focus_list[symbol]
-                logger.info(f"removed from focus list | {symbol} | too far from OB")
-
+                logger.info(f"♻️ removed | {symbol} | too far")
+                
+                # 📢 اعلان تلگرام: حذف شد از لیست
+                send_telegram(
+                    f"➖ <b>از لیست بررسی حذف شد</b>\n"
+                    f"━━━━━━━━━━━━━━━\n"
+                    f"ارز: <b>{symbol}</b>\n"
+                    f"دلیل: قیمت خیلی از اوردر بلاک دور شد ({round(dist*100, 2)}%)\n"
+                    f"📋 لیست: {len(focus_list)}/{MAX_FOCUS_LIST_SIZE}"
+                )
         except Exception as e:
-            logger.error(f"active scan {symbol} failed | {e}")
-
+            logger.error(f"active {symbol} failed | {e}")
+    
+    state["focus_list"] = focus_list
     save_state(state)
+
+def _monitor_active_position(state: dict):
+    pos = state["active_position"]
+    symbol = pos["symbol"]
+    
+    try:
+        df = fetch_klines(symbol, "4h", 5)
+        if df is None: return
+        current_price = float(df["close"].iloc[-1])
+        
+        entry = pos["entry_price"]
+        target = pos["target_price"]
+        profit_pct = (current_price - entry) / entry * 100
+        
+        logger.info(f"📊 MONITOR | {symbol} | price={current_price} | profit={round(profit_pct,2)}%")
+        
+        if current_price >= target:
+            send_telegram(f"🎯 <b>LPD TARGET HIT</b>\nارز: {symbol}\nسود: {round(profit_pct,2)}%\n✅ خارج شو!")
+            _reset_active(state)
+            return
+        
+        if profit_pct <= -7:
+            send_telegram(f"🚨 <b>LPD HARD STOP</b>\nارز: {symbol}\nضرر: {round(profit_pct,2)}%\n🚪 خروج فوری!")
+            _reset_active(state)
+            return
+        
+        if profit_pct <= -3:
+            send_telegram(f"⚠️ <b>LPD Warning -3%</b>\nارز: {symbol}\nضرر: {round(profit_pct,2)}%\n🧐 مراقب باش")
+    except Exception as e:
+        logger.error(f"monitor failed | {e}")
+
+def _reset_active(state: dict):
+    pos = state.get("active_position")
+    if pos:
+        symbol = pos["symbol"]
+        focus_list = state.get("focus_list", {})
+        if symbol in focus_list:
+            del focus_list[symbol]
+        state["focus_list"] = focus_list
+        state["active_position"] = None
+        logger.info(f"♻️ POSITION CLOSED | {symbol} | focus_list={len(focus_list)}")
+        
+        # 📢 اعلان تلگرام: ریست پوزیشن
+        send_telegram(
+            f"🔄 <b>پوزیشن بسته شد</b>\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"ارز: <b>{symbol}</b>\n"
+            f"لیست ریست شد. اسکن ادامه می‌یابد.\n"
+            f"📋 لیست: {len(focus_list)}/{MAX_FOCUS_LIST_SIZE}"
+        )
+        save_state(state)
 
 # ============================================================
 # تابع اصلی
