@@ -668,7 +668,9 @@ def _fetch_whale_flow(symbol: str, hours: int = 1) -> Optional[dict]:
         trade_count = 0
 
         for trade in recent:
-            if trade.get("symbol") != symbol:
+            # ✅ نرمال‌سازی symbol: هم BTCUSDT کار کنه هم BTC
+            trade_sym = str(trade.get("symbol", "")).upper()
+            if trade_sym not in (symbol.upper(), _base_asset(symbol).upper()):
                 continue
             try:
                 ts_str = trade.get("trade_time", "").replace("Z", "+00:00")
