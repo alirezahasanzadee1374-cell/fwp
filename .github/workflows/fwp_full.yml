@@ -51,7 +51,10 @@ jobs:
           git config --local user.name "FWP Bot"
           git add state.json 2>/dev/null || true
           git diff --quiet && git diff --staged --quiet || git commit -m "FWP full state update [skip ci]"
-          git push || true
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main 2>/dev/null && git push 2>/dev/null && break
+            sleep 2
+          done
 
       - name: Upload logs (on failure)
         if: failure()
