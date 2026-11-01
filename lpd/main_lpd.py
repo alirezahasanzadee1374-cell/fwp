@@ -1,6 +1,5 @@
 """
 main_lpd.py — اجراکننده اصلی پروژه LPD (سکوی پرتاب)
-با قابلیت مدیریت لیست تمرکز (Focus List) و ذخیره‌سازی استیت
 """
 
 import os
@@ -12,7 +11,7 @@ import hashlib
 import logging
 import importlib
 import tempfile
-from typing import Optional, List, Dict
+from typing import Optional
 
 import requests
 import pandas as pd
@@ -82,7 +81,7 @@ def load_lpd_strategy():
     return strategy_module
 
 # ============================================================
-# ذخیره و لود استیت (لیست تمرکز)
+# حافظه (State)
 # ============================================================
 def load_state() -> dict:
     if os.path.exists(LPD_STATE_FILE):
@@ -132,7 +131,8 @@ def load_toobit_whitelist() -> set:
             if sym.endswith("ONUSDT") or sym.endswith("XUSDT") or sym.endswith("USDC"): continue
             symbols.add(sym)
         return symbols
-    except Exception:
+    except Exception as e:
+        logger.error(f"toobit whitelist failed | {e}")
         return set()
 
 # ============================================================
@@ -147,7 +147,8 @@ def get_top_symbols(whitelist: set, limit: int = 100) -> list:
         volumes = {t["symbol"]: float(t.get("quoteVolume", 0)) for t in tickers if t.get("symbol") in whitelist}
         sorted_syms = sorted(volumes.items(), key=lambda x: x[1], reverse=True)
         return [s for s, _ in sorted_syms[:limit]]
-    except Exception:
+    except Exception as e:
+        logger.error(f"top symbols failed | {e}")
         return []
 
 # ============================================================
@@ -157,6 +158,7 @@ def fetch_klines(symbol: str, interval: str, limit: int = 300) -> Optional[pd.Da
     url = "https://data-api.binance.vision/api/v3/klines"
     try:
         r = requests.get(url, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=10)
+        r.raise_for_status()
         data = r.json()
         if not data: return None
         df = pd.DataFrame(data, columns=["time", "open", "high", "low", "close", "volume", "close_time", "qav", "trades", "taker_base", "taker_quote", "ignore"])
@@ -203,12 +205,14 @@ def run_full_scan(state: dict, lpd_strategy):
     logger.info(">>> Starting FULL SCAN to find setups")
     whitelist = load_toobit_whitelist()
     symbols = get_top_symbols(whitelist, 100)
-    if not symbols: return
+    if not symbols: 
+        logger.error("no symbols found")
+        return
 
     focus_list = state.get("focus_list", {})
     new_setups = 0
 
-    for symbol in symbols:
+    for i, symbol in enumerate(symbols, 1):
         try:
             df_4h = fetch_klines(symbol, "4h", 300)
             df_1d = fetch_klines(symbol, "1d", 300)
@@ -225,9 +229,13 @@ def run_full_scan(state: dict, lpd_strategy):
                 setup["current_price"] = current_price
                 focus_list[symbol] = setup
                 new_setups += 1
-                logger.info(f"setup found | {symbol} | dist={setup['distance_to_entry']}% | profit={setup['profit_pct']}%")
+                logger.info(f"⭐ setup found | {symbol} | dist={setup['distance_to_entry']}% | profit={setup['profit_pct']}%")
         except Exception as e:
             logger.error(f"scan {symbol} failed | {e}")
+
+        # چاپ پیشرفت هر ۱۰ ارز
+        if i % 10 == 0:
+            logger.info(f"progress | {i}/{len(symbols)} | setups={new_setups}")
 
         time.sleep(0.1)
 
@@ -304,8 +312,6 @@ def main():
     lpd_strategy = load_lpd_strategy()
     state = load_state()
     
-    # اگر آرگومان "active" پاس داده شد، فقط اسکن سریع انجام بده
-    # در غیر این صورت اسکن کامل
     if len(sys.argv) > 1 and sys.argv[1] == "active":
         run_active_scan(state)
     else:
