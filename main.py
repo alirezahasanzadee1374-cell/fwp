@@ -104,56 +104,95 @@ def send_telegram(message: str, priority: str = "profit_update") -> bool:
         return False
 
 # ============================================================
-# ۳. ذخیره‌سازی state
+# ۳. ذخیره‌سازی state (دو فایل جدا)
 # ============================================================
 saved_whale_orders: dict = {}
 active_positions: dict = {}
 _listed_symbols: set = set()
 _saved_oi: dict = {}
 
-STATE_FILE = "state.json"
+STATE_FILE = "state.json"  # فقط برای مهاجرت یک‌باره
 
 def save_state() -> None:
+    """ذخیره state به دو فایل جدا (جلوگیری از conflict بین active و full)."""
     try:
+        # فایل ۱: پوزیشن‌ها + نمادها (نویسنده: fwp_active)
+        pos_state = {
+            "active_positions": active_positions,
+            "listed_symbols": list(_listed_symbols),
+            "last_updated": time.time(),
+        }
+        with open("state_positions.json", "w", encoding="utf-8") as f:
+            json.dump(pos_state, f, ensure_ascii=False, indent=2)
+
+        # فایل ۲: سفارش‌های نهنگ + OI (نویسنده: fwp_full)
         whale_orders_serializable = {
             f"{k[0]}|{k[1]}|{k[2]}": v
             for k, v in saved_whale_orders.items()
         }
-        state = {
-            "active_positions": active_positions,
+        whale_state = {
             "saved_whale_orders": whale_orders_serializable,
-            "listed_symbols": list(_listed_symbols),
             "saved_oi": _saved_oi,
             "last_updated": time.time(),
         }
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2)
-        logger.info(f"state saved | {len(active_positions)} positions")
+        with open("state_whales.json", "w", encoding="utf-8") as f:
+            json.dump(whale_state, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"state saved | {len(active_positions)} positions | {len(saved_whale_orders)} whale orders")
     except Exception as e:
         logger.error(f"save_state failed | {e}")
 
 def load_state() -> None:
-    if not os.path.exists(STATE_FILE):
-        logger.info("state.json not found — starting fresh")
-        return
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            state = json.load(f)
-        active_positions.clear()
-        active_positions.update(state.get("active_positions", {}))
-        saved_whale_orders.clear()
-        for key_str, val in state.get("saved_whale_orders", {}).items():
-            parts = key_str.split("|")
-            if len(parts) == 3:
-                key = (parts[0], parts[1], float(parts[2]))
-                saved_whale_orders[key] = val
-        _listed_symbols.clear()
-        _listed_symbols.update(state.get("listed_symbols", []))
-        _saved_oi.clear()
-        _saved_oi.update(state.get("saved_oi", {}))
-        logger.info(f"state loaded | {len(active_positions)} positions")
-    except Exception as e:
-        logger.error(f"load_state failed | {e}")
+    """بارگذاری state از دو فایل جدا. مهاجرت یک‌باره از state.json قدیمی."""
+
+    # لود پوزیشن‌ها (نویسنده: fwp_active)
+    if os.path.exists("state_positions.json"):
+        try:
+            with open("state_positions.json", "r", encoding="utf-8") as f:
+                pos_state = json.load(f)
+            active_positions.clear()
+            active_positions.update(pos_state.get("active_positions", {}))
+            _listed_symbols.clear()
+            _listed_symbols.update(pos_state.get("listed_symbols", []))
+        except Exception as e:
+            logger.error(f"load state_positions.json failed | {e}")
+
+    # لود سفارش‌های نهنگ (نویسنده: fwp_full)
+    if os.path.exists("state_whales.json"):
+        try:
+            with open("state_whales.json", "r", encoding="utf-8") as f:
+                whale_state = json.load(f)
+            saved_whale_orders.clear()
+            for key_str, val in whale_state.get("saved_whale_orders", {}).items():
+                parts = key_str.split("|")
+                if len(parts) == 3:
+                    saved_whale_orders[(parts[0], parts[1], float(parts[2]))] = val
+            _saved_oi.clear()
+            _saved_oi.update(whale_state.get("saved_oi", {}))
+        except Exception as e:
+            logger.error(f"load state_whales.json failed | {e}")
+
+    # مهاجرت یک‌باره از state.json قدیمی (اگه فایل‌های جدید خالی بودن)
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                old = json.load(f)
+            if not active_positions and "active_positions" in old:
+                active_positions.update(old.get("active_positions", {}))
+            if not saved_whale_orders and "saved_whale_orders" in old:
+                for key_str, val in old.get("saved_whale_orders", {}).items():
+                    parts = key_str.split("|")
+                    if len(parts) == 3:
+                        saved_whale_orders[(parts[0], parts[1], float(parts[2]))] = val
+            if not _saved_oi and "saved_oi" in old:
+                _saved_oi.update(old.get("saved_oi", {}))
+            if not _listed_symbols and "listed_symbols" in old:
+                _listed_symbols.update(old.get("listed_symbols", []))
+            logger.info("old state.json imported for one-time migration")
+        except Exception as e:
+            logger.warning(f"migration from state.json failed | {e}")
+
+    logger.info(f"state loaded | {len(active_positions)} positions | {len(saved_whale_orders)} whale orders")
 
 # ============================================================
 # ۴. ذخیره سفارش‌های نهنگ
@@ -428,7 +467,7 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
     return signal
 
 # ============================================================
-# ۱۰. پردازش سیگنال (اضافه شدن وضعیت آنچین بیت‌کوین)
+# ۱۰. پردازش سیگنال (با وضعیت آنچین بیت‌کوین)
 # ============================================================
 def process_signal(signal: dict, current_price: float) -> None:
     symbol = signal["symbol"]
@@ -448,7 +487,7 @@ def process_signal(signal: dict, current_price: float) -> None:
 
     emoji = {"diamond": "💎", "platinum": "🏆", "golden": "🥇", "silver": "🥈"}.get(signal_type, "📊")
 
-    # ✅ گرفتن وضعیت آنچین بیت‌کوین
+    # وضعیت آنچین بیت‌کوین
     btc_sentiment = platinum_manager.get_btc_onchain_sentiment()
 
     send_telegram(
@@ -469,7 +508,7 @@ def process_signal(signal: dict, current_price: float) -> None:
         f"• سقف ضرر: ${MAX_LOSS_USD:.0f}\n"
         f"━━━━━━━━━━━━━━━\n"
         f"📡 <b>وضعیت آنچین بیت‌کوین:</b>\n"
-        f"• {btc_sentiment}",  # ✅ ته پیام اضافه شد
+        f"• {btc_sentiment}",
         priority="profit_update"
     )
 
