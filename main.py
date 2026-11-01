@@ -219,7 +219,7 @@ def detect_whale_cancel(symbol: str, whale_walls: dict) -> list:
     return cancelled
 
 # ============================================================
-# ۴.۵. تشخیص سفارش در حال پر شدن (قانون ۸ — جدید)
+# ۴.۵. تشخیص سفارش در حال پر شدن (قانون ۸)
 # ============================================================
 def detect_whale_fill(symbol: str, whale_walls: dict, min_fill_pct: float = 0.10) -> list:
     """تشخیص سفارش‌های نهنگ که دارن پر می‌شن (قانون ۸)."""
@@ -343,7 +343,7 @@ def is_meme_coin(symbol: str) -> bool:
     return base in [m.upper() for m in MEME_COINS_WHITELIST]
 
 # ============================================================
-# ۹. تحلیل یک ارز (با ۴ تیک جدید: #۲، #۶، #۷)
+# ۹. تحلیل یک ارز
 # ============================================================
 def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_module):
     is_meme = is_meme_coin(symbol)
@@ -398,9 +398,9 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
     if balance_shift:
         logger.info(f"balance shift confirmed | {symbol}")
 
-    # ✅ تیک #۶: تشخیص سفارش‌های در حال پر شدن (قانون ۸)
+    # تشخیص سفارش‌های در حال پر شدن (فقط برای پوزیشن‌های فعال)
     filling_orders = detect_whale_fill(symbol, whale_walls)
-    if filling_orders:
+    if filling_orders and symbol in active_positions:
         for f in filling_orders:
             side_fa = "خرید" if f["side"] == "bid" else "فروش"
             logger.info(f"whale fill | {symbol} | {side_fa} | {f['fill_pct']*100:.0f}%")
@@ -442,8 +442,8 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
     news_positive = strategy_module.check_news_positive(all_news, symbol)
     news_negative = strategy_module.check_news_negative(all_news, symbol)
 
-    # ✅ تیک #۲: هشدار نهنگ مخالف قبل از ورود (قانون ۲۳)
-    if wall_power["dominant"] == "ask":
+    # هشدار نهنگ مخالف (فقط اگه هم خرید و هم فروش دیوار واقعی داشته باشن)
+    if wall_power["dominant"] == "ask" and wall_power["bid_power"] >= 100_000:
         send_telegram(
             f"⚠️ <b>نهنگ فروشنده ظاهر شد</b>\n"
             f"ارز: {symbol}\n"
@@ -454,20 +454,6 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
         )
         logger.info(f"ask dominant | {symbol} | bid={wall_power['bid_power']:.0f} ask={wall_power['ask_power']:.0f}")
         return None
-
-    # ✅ تیک #۷: پیام "ستاپ آماده" (سوخت + زور + جاده)
-    if (bunker and power["winner"] == "buyers" and clear_path.get("clear")):
-        send_telegram(
-            f"🎯 <b>ستاپ آماده شد</b>\n"
-            f"ارز: {symbol}\n"
-            f"تایم‌فریم: {closest_tf}\n"
-            f"سوخت: ${bunker['total_bid_usd']:.0f}\n"
-            f"زور بایر: {power['ratio']:.2f}x\n"
-            f"جاده ۱۰٪: باز\n"
-            f"اقدام: منتظر تایید نهایی",
-            priority="minor_correction"
-        )
-        logger.info(f"setup ready | {symbol} | fuel={bunker['total_bid_usd']:.0f} | power={power['ratio']:.2f}")
 
     signal = strategy_module.generate_signal(
         symbol=symbol,
@@ -520,21 +506,26 @@ def process_signal(signal: dict, current_price: float) -> None:
 
     send_telegram(
         f"{emoji} <b>سیگنال {signal_type.upper()}</b>\n"
-        f"ارز: {symbol}\n"
-        f"تایم‌فریم: {signal['timeframe']}\n"
-        f"قیمت ورود: {entry_price}\n"
-        f"دلیل: {signal['reason']}\n"
-        f"قدرت: {signal['power_ratio']:.2f}\n"
-        f"نهنگ: {signal['bid_count']}\n"
-        f"هم‌پوشانی: {signal['overlap_count']}\n"
-        f"---\n"
-        f"ورود پله اول: ${STEP1_USD:.0f}\n"
-        f"سقف ضرر: ${MAX_LOSS_USD:.0f}",
+        f"━━━━━━━━━━━━━━━\n"
+        f"📊 مدل: {signal_type}\n"
+        f"⏱ تایم‌فریم: {signal['timeframe']}\n"
+        f"💰 قیمت ورود: {entry_price}\n"
+        f"\n"
+        f"🕵️ <b>تحلیل نهنگ:</b>\n"
+        f"• تعداد: {signal['bid_count']}\n"
+        f"• قدرت خرید: {signal['power_ratio']:.2f}x\n"
+        f"• هم‌پوشانی: {signal['overlap_count']}\n"
+        f"• دلیل: {signal['reason']}\n"
+        f"\n"
+        f"📈 <b>مدیریت سرمایه:</b>\n"
+        f"• پله اول: ${STEP1_USD:.0f}\n"
+        f"• سقف ضرر: ${MAX_LOSS_USD:.0f}\n"
+        f"━━━━━━━━━━━━━━━",
         priority="profit_update"
     )
 
 # ============================================================
-# ۱۱. مدیریت پوزیشن‌های فعال (با تیک #۳ جدید: چک مستمر جاده ۱۰٪)
+# ۱۱. مدیریت پوزیشن‌های فعال
 # ============================================================
 def manage_active_positions(strategy_module, data_fetcher_module, capital_manager_module, all_news):
     if not active_positions:
@@ -598,7 +589,7 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
                     alerts_buffer.append(("urgent_sell", f"⛽ <b>سوخت شورت تموم شد</b>\nارز: {symbol}\nاقدام: با سود فعلی خارج شوید."))
                     skip_lower = True
 
-        # ✅ تیک #۳: چک مستمر جاده ۱۰٪ (قانون ۲۱)
+        # چک مستمر جاده ۱۰٪
         if not skip_lower and order_book:
             clear_path_check = strategy_module.detect_clear_path(order_book, current_price)
             if not clear_path_check.get("clear"):
@@ -653,7 +644,7 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
             if early:
                 alerts_buffer.append(("minor_correction", f"🔄 <b>تاییدیه زودهنگام</b>\nارز: {symbol}\nریزش: {early['current_drop']*100:.1f}%\nنهنگ جدید: {early['whale_count']}"))
 
-        # ✅ قانون ۳۶: فقط بالاترین اولویت رو بفرست
+        # فقط بالاترین اولویت رو بفرست
         if alerts_buffer:
             try:
                 best = min(alerts_buffer, key=lambda x: ALERT_PRIORITY.index(x[0]) if x[0] in ALERT_PRIORITY else 999)
