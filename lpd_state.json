@@ -194,7 +194,7 @@
       "symbol": "ZKCUSDT",
       "target_price": 0.04,
       "profit_pct": 25.39,
-      "status": "waiting",
+      "status": "ready",
       "initial_whale_usd": 0,
       "ob_high": null,
       "ob_low": null,
