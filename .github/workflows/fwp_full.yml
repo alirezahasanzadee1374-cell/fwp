@@ -46,6 +46,7 @@ jobs:
           git config --local user.name "FWP Bot"
           git add state_whales.json 2>/dev/null || true
           git diff --quiet && git diff --staged --quiet || git commit -m "FWP whales update [skip ci]"
+          git pull --rebase origin main || true
           git push || true
 
       - name: Upload logs (on failure)
