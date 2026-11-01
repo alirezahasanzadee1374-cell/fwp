@@ -115,7 +115,8 @@ def run_full_scan(state, strategy):
     for sym in batch:
         if sym in state["focus_list"]: continue
         
-        df = get_klines_binance(sym)
+        # ✅ اینجا تایم‌فریم 4h رو اضافه کردم که ارور نده
+        df = get_klines_binance(sym, "4h")
         ob = get_orderbook_okx_futures(sym)
         if df is None or ob is None: continue
         
