@@ -15,6 +15,8 @@ from typing import Optional
 
 import requests
 
+import platinum_manager
+
 from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
@@ -51,38 +53,29 @@ logger = logging.getLogger("FWP.Main")
 # ۱. رمزگشایی strategy.enc
 # ============================================================
 def load_strategy():
-    """رمزگشایی strategy.enc با MASTER_KEY و بارگذاری ماژول strategy."""
     from cryptography.fernet import Fernet
-
     if not os.path.exists("strategy.enc"):
         logger.error("strategy.enc not found")
         sys.exit(1)
-
     if not MASTER_KEY:
         logger.error("MASTER_KEY is empty")
         sys.exit(1)
-
     digest = hashlib.sha256(MASTER_KEY.encode("utf-8")).digest()
     key = base64.urlsafe_b64encode(digest)
     fernet = Fernet(key)
-
     with open("strategy.enc", "rb") as f:
         ciphertext = f.read()
-
     try:
         plaintext = fernet.decrypt(ciphertext)
     except Exception as e:
         logger.error(f"decryption failed: {e}")
         sys.exit(1)
-
     tmp_dir = tempfile.gettempdir()
     tmp_path = os.path.join(tmp_dir, "strategy.py")
     with open(tmp_path, "wb") as f:
         f.write(plaintext)
-
     if tmp_dir not in sys.path:
         sys.path.insert(0, tmp_dir)
-
     sys.modules.pop("strategy", None)
     strategy_module = importlib.import_module("strategy")
     logger.info(f"strategy.enc decrypted and loaded from {tmp_path}")
@@ -92,11 +85,9 @@ def load_strategy():
 # ۲. ارسال تلگرام
 # ============================================================
 def send_telegram(message: str, priority: str = "profit_update") -> bool:
-    """ارسال پیام به تلگرام."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("telegram credentials missing")
         return False
-
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -104,7 +95,6 @@ def send_telegram(message: str, priority: str = "profit_update") -> bool:
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
-
     try:
         r = requests.post(url, json=payload, timeout=10)
         r.raise_for_status()
@@ -124,13 +114,11 @@ _saved_oi: dict = {}
 STATE_FILE = "state.json"
 
 def save_state() -> None:
-    """ذخیره state تو state.json."""
     try:
         whale_orders_serializable = {
             f"{k[0]}|{k[1]}|{k[2]}": v
             for k, v in saved_whale_orders.items()
         }
-
         state = {
             "active_positions": active_positions,
             "saved_whale_orders": whale_orders_serializable,
@@ -138,40 +126,31 @@ def save_state() -> None:
             "saved_oi": _saved_oi,
             "last_updated": time.time(),
         }
-
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False, indent=2)
-
         logger.info(f"state saved | {len(active_positions)} positions")
     except Exception as e:
         logger.error(f"save_state failed | {e}")
 
 def load_state() -> None:
-    """بارگذاری state از state.json."""
     if not os.path.exists(STATE_FILE):
         logger.info("state.json not found — starting fresh")
         return
-
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             state = json.load(f)
-
         active_positions.clear()
         active_positions.update(state.get("active_positions", {}))
-
         saved_whale_orders.clear()
         for key_str, val in state.get("saved_whale_orders", {}).items():
             parts = key_str.split("|")
             if len(parts) == 3:
                 key = (parts[0], parts[1], float(parts[2]))
                 saved_whale_orders[key] = val
-
         _listed_symbols.clear()
         _listed_symbols.update(state.get("listed_symbols", []))
-
         _saved_oi.clear()
         _saved_oi.update(state.get("saved_oi", {}))
-
         logger.info(f"state loaded | {len(active_positions)} positions")
     except Exception as e:
         logger.error(f"load_state failed | {e}")
@@ -184,18 +163,13 @@ def _order_key(symbol: str, side: str, price: float) -> tuple:
 
 def update_saved_whale_orders(symbol: str, whale_walls: dict, current_ts: float) -> None:
     cutoff = current_ts - 1800
-    keys_to_delete = [
-        k for k, v in saved_whale_orders.items()
-        if v["timestamp"] < cutoff
-    ]
+    keys_to_delete = [k for k, v in saved_whale_orders.items() if v["timestamp"] < cutoff]
     for k in keys_to_delete:
         del saved_whale_orders[k]
-
     for wall in whale_walls.get("bids", []):
         key = _order_key(symbol, "bid", wall["price"])
         if key not in saved_whale_orders:
             saved_whale_orders[key] = {"usd": wall["usd"], "timestamp": current_ts}
-
     for wall in whale_walls.get("asks", []):
         key = _order_key(symbol, "ask", wall["price"])
         if key not in saved_whale_orders:
@@ -205,31 +179,25 @@ def detect_whale_cancel(symbol: str, whale_walls: dict) -> list:
     cancelled = []
     if not whale_walls:
         return cancelled
-
     current_bids = {_order_key(symbol, "bid", w["price"]) for w in whale_walls.get("bids", [])}
     current_asks = {_order_key(symbol, "ask", w["price"]) for w in whale_walls.get("asks", [])}
     current_all = current_bids | current_asks
-
     for key, old_data in saved_whale_orders.items():
         if key[0] != symbol:
             continue
         if key not in current_all:
             cancelled.append({"side": key[1], "price": key[2], "old_usd": old_data["usd"]})
-
     return cancelled
 
 # ============================================================
 # ۴.۵. تشخیص سفارش در حال پر شدن (قانون ۸)
 # ============================================================
 def detect_whale_fill(symbol: str, whale_walls: dict, min_fill_pct: float = 0.10) -> list:
-    """تشخیص سفارش‌های نهنگ که دارن پر می‌شن (قانون ۸)."""
     if not whale_walls:
         return []
-
     filling = []
     current_bids = {_order_key(symbol, "bid", w["price"]): w["usd"] for w in whale_walls.get("bids", [])}
     current_asks = {_order_key(symbol, "ask", w["price"]): w["usd"] for w in whale_walls.get("asks", [])}
-
     for key, old_data in saved_whale_orders.items():
         if key[0] != symbol:
             continue
@@ -244,7 +212,6 @@ def detect_whale_fill(symbol: str, whale_walls: dict, min_fill_pct: float = 0.10
                     "current_usd": current_usd,
                     "fill_pct": fill_pct,
                 })
-
     return filling
 
 # ============================================================
@@ -253,7 +220,6 @@ def detect_whale_fill(symbol: str, whale_walls: dict, min_fill_pct: float = 0.10
 def detect_repeat_whale(symbol: str, whale_walls: dict) -> int:
     if not whale_walls:
         return 0
-
     matches = 0
     for wall in whale_walls.get("bids", []):
         key = _order_key(symbol, "bid", wall["price"])
@@ -261,7 +227,6 @@ def detect_repeat_whale(symbol: str, whale_walls: dict) -> int:
             old_price = key[2]
             if abs(wall["price"] - old_price) / old_price <= REPEAT_WHALE_PRICE_TOLERANCE:
                 matches += 1
-
     return matches
 
 # ============================================================
@@ -270,18 +235,14 @@ def detect_repeat_whale(symbol: str, whale_walls: dict) -> int:
 def detect_early_confirmation(symbol: str, current_price: float, whale_walls: dict) -> Optional[dict]:
     if symbol not in active_positions:
         return None
-
     pos = active_positions[symbol]
     step1_price = pos["step1_price"]
     current_drop = (step1_price - current_price) / step1_price
-
     if current_drop < EARLY_CONFIRMATION_GAP_PCT:
         return None
-
     step2_price = step1_price * 0.925
     if current_price <= step2_price:
         return None
-
     if whale_walls and whale_walls.get("bid_count", 0) > 0:
         return {
             "symbol": symbol,
@@ -296,25 +257,21 @@ def detect_early_confirmation(symbol: str, current_price: float, whale_walls: di
 # ============================================================
 def detect_urgent_sell(symbol: str, order_book: dict, current_oi: Optional[float], power: dict) -> Optional[dict]:
     triggers = []
-
     if current_oi is not None and symbol in _saved_oi:
         old_oi = _saved_oi[symbol]
         if old_oi > 0:
             oi_drop = (old_oi - current_oi) / old_oi
             if oi_drop >= URGENT_SELL_OI_DROP_PCT:
                 triggers.append(f"OI drop {oi_drop*100:.1f}%")
-
     if power and power.get("winner") == "sellers" and power.get("ratio", 0) > 0:
         if (1 / power["ratio"]) >= URGENT_SELL_POWER_SHIFT_RATIO:
             triggers.append(f"power shift (ratio={power['ratio']:.2f})")
-
     if order_book:
         for p, q in order_book.get("asks", []):
             if p * q >= MIN_WHALE_WALL_USD:
                 key = _order_key(symbol, "ask", p)
                 if key not in saved_whale_orders:
                     triggers.append(f"new ask wall ${p*q:.0f}")
-
     if triggers:
         return {"symbol": symbol, "triggers": triggers}
     return None
@@ -327,7 +284,6 @@ def detect_listing(symbol: str, whale_walls: dict) -> Optional[dict]:
         return None
     if symbol in _listed_symbols:
         return None
-
     if whale_walls and whale_walls.get("bid_count", 0) > 0:
         total_bid = sum(w["usd"] for w in whale_walls["bids"])
         if total_bid >= LISTING_HUNT_MIN_WHALE_USD:
@@ -347,15 +303,11 @@ def is_meme_coin(symbol: str) -> bool:
 # ============================================================
 def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_module):
     is_meme = is_meme_coin(symbol)
-
     df_4h = data_fetcher_module.get_klines(symbol, "4h", KLINE_LIMIT)
     df_1d = data_fetcher_module.get_klines(symbol, "1d", KLINE_LIMIT)
-
     if df_4h is None or len(df_4h) < 50:
         return None
-
     current_price = float(df_4h["close"].iloc[-1])
-
     if is_meme:
         if df_1d is None or len(df_1d) < 50:
             return None
@@ -365,24 +317,19 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
 
     static_levels_4h = strategy_module.find_static_levels(df_4h, current_price)
     static_levels_1d = strategy_module.find_static_levels(df_1d, current_price) if df_1d is not None else []
-
     all_zones = [(z, "4h") for z in static_levels_4h] + [(z, "1d") for z in static_levels_1d]
     if not all_zones:
         return None
-
     all_zones.sort(key=lambda x: x[0]["distance_pct"])
     closest_zone, closest_tf = all_zones[0]
-
     if closest_zone["distance_pct"] > 0.05:
         return None
 
     order_book = data_fetcher_module.get_order_book(symbol, 100)
     if order_book is None:
         return None
-
     current_oi = data_fetcher_module.get_open_interest(symbol)
     market_cap = data_fetcher_module.get_market_cap(symbol)
-
     if current_oi is not None:
         _saved_oi[symbol] = current_oi
 
@@ -398,7 +345,6 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
     if balance_shift:
         logger.info(f"balance shift confirmed | {symbol}")
 
-    # تشخیص سفارش‌های در حال پر شدن (فقط برای پوزیشن‌های فعال)
     filling_orders = detect_whale_fill(symbol, whale_walls)
     if filling_orders and symbol in active_positions:
         for f in filling_orders:
@@ -415,7 +361,6 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
                 priority="minor_correction"
             )
 
-    # fallback حجم
     if market_cap and market_cap.get("volume_24h", 0) > 0:
         volume_24h = market_cap["volume_24h"]
     else:
@@ -442,7 +387,6 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
     news_positive = strategy_module.check_news_positive(all_news, symbol)
     news_negative = strategy_module.check_news_negative(all_news, symbol)
 
-    # هشدار نهنگ مخالف (فقط اگه هم خرید و هم فروش دیوار واقعی داشته باشن)
     if wall_power["dominant"] == "ask" and wall_power["bid_power"] >= 100_000:
         send_telegram(
             f"⚠️ <b>نهنگ فروشنده ظاهر شد</b>\n"
@@ -484,7 +428,7 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
     return signal
 
 # ============================================================
-# ۱۰. پردازش سیگنال
+# ۱۰. پردازش سیگنال (اضافه شدن وضعیت آنچین بیت‌کوین)
 # ============================================================
 def process_signal(signal: dict, current_price: float) -> None:
     symbol = signal["symbol"]
@@ -504,6 +448,9 @@ def process_signal(signal: dict, current_price: float) -> None:
 
     emoji = {"diamond": "💎", "platinum": "🏆", "golden": "🥇", "silver": "🥈"}.get(signal_type, "📊")
 
+    # ✅ گرفتن وضعیت آنچین بیت‌کوین
+    btc_sentiment = platinum_manager.get_btc_onchain_sentiment()
+
     send_telegram(
         f"{emoji} <b>سیگنال {signal_type.upper()}</b>\n"
         f"━━━━━━━━━━━━━━━\n"
@@ -520,7 +467,9 @@ def process_signal(signal: dict, current_price: float) -> None:
         f"📈 <b>مدیریت سرمایه:</b>\n"
         f"• پله اول: ${STEP1_USD:.0f}\n"
         f"• سقف ضرر: ${MAX_LOSS_USD:.0f}\n"
-        f"━━━━━━━━━━━━━━━",
+        f"━━━━━━━━━━━━━━━\n"
+        f"📡 <b>وضعیت آنچین بیت‌کوین:</b>\n"
+        f"• {btc_sentiment}",  # ✅ ته پیام اضافه شد
         priority="profit_update"
     )
 
@@ -530,15 +479,12 @@ def process_signal(signal: dict, current_price: float) -> None:
 def manage_active_positions(strategy_module, data_fetcher_module, capital_manager_module, all_news):
     if not active_positions:
         return
-
     for symbol in list(active_positions.keys()):
         pos = active_positions[symbol]
-
         df = data_fetcher_module.get_klines(symbol, "4h", 5)
         if df is None or len(df) == 0:
             continue
         current_price = float(df["close"].iloc[-1])
-
         entries = pos["entries"]
         avg_price = capital_manager_module.calculate_avg_price(entries)
 
@@ -546,13 +492,11 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
         should_delete = False
         skip_lower = False
 
-        # ۱. سقف ضرر
         if capital_manager_module.check_max_loss(entries, current_price):
             alerts_buffer.append(("threat_alert", f"🚨 <b>سقف ضرر!</b>\nارز: {symbol}\nاقدام: خارج شوید!"))
             should_delete = True
             skip_lower = True
 
-        # ۲. اهداف سود
         if not skip_lower:
             target = capital_manager_module.check_profit_targets(avg_price, current_price)
             if target:
@@ -563,7 +507,6 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
                 else:
                     alerts_buffer.append(("profit_update", f"📈 <b>سود {target['target']*100:.0f}%</b>\nارز: {symbol}\nسود فعلی: {target['profit_pct']*100:.1f}%"))
 
-        # ۳. دیتای اضافی
         order_book = None
         power = {"winner": "none", "ratio": 0}
         current_oi = None
@@ -573,13 +516,11 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
             current_oi = data_fetcher_module.get_open_interest(symbol)
             power = strategy_module.calculate_power(order_book, current_price) if order_book else {"winner": "none", "ratio": 0}
 
-            # ۴. قانون ۴۳: رد پای فروش فوری
             urgent = detect_urgent_sell(symbol, order_book, current_oi, power)
             if urgent:
                 alerts_buffer.append(("urgent_sell", f"🚨 <b>رد پای فروش!</b>\nارز: {symbol}\nنشانه‌ها: {', '.join(urgent['triggers'])}\nاقدام: خروج!"))
                 skip_lower = True
 
-        # ۵. قانون ۲۲: اتمام سوخت شورت‌ها
         if not skip_lower:
             klines_5m = data_fetcher_module.get_klines(symbol, "5m", 30)
             if klines_5m is not None:
@@ -589,19 +530,16 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
                     alerts_buffer.append(("urgent_sell", f"⛽ <b>سوخت شورت تموم شد</b>\nارز: {symbol}\nاقدام: با سود فعلی خارج شوید."))
                     skip_lower = True
 
-        # چک مستمر جاده ۱۰٪
         if not skip_lower and order_book:
             clear_path_check = strategy_module.detect_clear_path(order_book, current_price)
             if not clear_path_check.get("clear"):
                 logger.info(f"clear path blocked | {symbol}")
                 alerts_buffer.append(("minor_correction", f"🚧 <b>جاده ۱۰٪ بسته شد</b>\nارز: {symbol}\nاقدام: بررسی خروج"))
 
-        # ۶. قانون ۳۹: ۴ حالت در ۷٪ ضرر
         if not skip_lower:
             current_loss_pct = (avg_price - current_price) / avg_price if avg_price > 0 else 0
             if current_loss_pct >= 0.07:
                 whale_walls = strategy_module.detect_whale_walls(order_book) if order_book else {"bid_count": 0, "bids": []}
-
                 if whale_walls.get("bids") and whale_walls["bids"][0]["usd"] >= LOSS_7PCT_NEW_LIMIT_MIN_USD:
                     logger.info(f"  case1: new limit | {symbol}")
                     alerts_buffer.append(("minor_correction", f"🟡 <b>۷٪ ضرر + لیمیت جدید</b>\nارز: {symbol}\nنهنگ: ${whale_walls['bids'][0]['usd']:.0f}\nاقدام: پله دوم رو بررسی کن."))
@@ -614,14 +552,12 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
                         alerts_buffer.append(("threat_alert", f"🚨 <b>بی‌رمقی بازار!</b>\nارز: {symbol}\nحجم: {recent_volume/avg_volume*100:.0f}% میانگین\nاقدام: خروج فوری!"))
                         should_delete = True
                         skip_lower = True
-
                 if not skip_lower and power["winner"] == "sellers":
                     logger.info(f"  case4: sell pressure | {symbol}")
                     alerts_buffer.append(("threat_alert", f"🚨 <b>فشار فروش!</b>\nارز: {symbol}\nزور سلرها: {1/power['ratio']:.2f}x\nاقدام: خروج فوری!"))
                     should_delete = True
                     skip_lower = True
 
-        # ۷. قانون ۳۶: اصلاح موقت
         if not skip_lower:
             if power["winner"] == "sellers" and power.get("ratio", 0) > 0:
                 seller_ratio = 1 / power["ratio"]
@@ -629,7 +565,6 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
                     logger.info(f"minor correction | {symbol} | seller_ratio={seller_ratio:.2f}")
                     alerts_buffer.append(("minor_correction", f"🌊 <b>اصلاح کوچک</b>\nارز: {symbol}\nزور سلرها: {seller_ratio:.2f}x\nپوزیشن حفظ شود."))
 
-            # ۸. قانون ۳۷: تارگت هوشمند
             if order_book and order_book.get("asks"):
                 for ask_p, ask_q in order_book["asks"]:
                     ask_pct = (ask_p - current_price) / current_price
@@ -638,13 +573,11 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
                         alerts_buffer.append(("minor_correction", f"🎯 <b>دیوار فروش!</b>\nارز: {symbol}\nدیوار: ${ask_p*ask_q:.0f} در {ask_pct*100:.1f}%\nتارگت رو {ask_pct*100:.0f}% تنظیم کن."))
                         break
 
-            # ۹. قانون ۲۹: تاییدیه زودهنگام
             whale_walls_early = strategy_module.detect_whale_walls(order_book) if order_book else {"bid_count": 0}
             early = detect_early_confirmation(symbol, current_price, whale_walls_early)
             if early:
                 alerts_buffer.append(("minor_correction", f"🔄 <b>تاییدیه زودهنگام</b>\nارز: {symbol}\nریزش: {early['current_drop']*100:.1f}%\nنهنگ جدید: {early['whale_count']}"))
 
-        # فقط بالاترین اولویت رو بفرست
         if alerts_buffer:
             try:
                 best = min(alerts_buffer, key=lambda x: ALERT_PRIORITY.index(x[0]) if x[0] in ALERT_PRIORITY else 999)
@@ -663,45 +596,34 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
 def manage_step2_entries(strategy_module, data_fetcher_module, capital_manager_module):
     if not active_positions:
         return
-
     for symbol in list(active_positions.keys()):
         pos = active_positions[symbol]
-
         if len(pos["entries"]) >= 2:
             continue
-
         df = data_fetcher_module.get_klines(symbol, "4h", 5)
         if df is None or len(df) == 0:
             continue
         current_price = float(df["close"].iloc[-1])
-
         order_book = data_fetcher_module.get_order_book(symbol, 100)
         if order_book is None:
             continue
-
         whale_walls = strategy_module.detect_whale_walls(order_book)
         whale_confirmed = whale_walls.get("bid_count", 0) > 0
-
         should_enter = capital_manager_module.should_enter_step2(
             step1_price=pos["step1_price"],
             current_price=current_price,
             whale_confirmed=whale_confirmed,
             already_in_step2=False,
         )
-
         if not should_enter:
             continue
-
         qty_step2 = round(STEP2_USD / current_price, 8) if current_price > 0 else 0
         if qty_step2 <= 0:
             continue
-
         pos["entries"].append({"price": current_price, "usd": STEP2_USD, "qty": qty_step2})
-
         new_avg = capital_manager_module.calculate_avg_price(pos["entries"])
         total_qty = sum(e["qty"] for e in pos["entries"])
         stop_price = new_avg - (MAX_LOSS_USD / total_qty) if total_qty > 0 else 0
-
         send_telegram(
             f"🟡 <b>پله دوم!</b>\nارز: {symbol}\n"
             f"قیمت: {current_price:.8f}\n"
@@ -715,18 +637,15 @@ def manage_step2_entries(strategy_module, data_fetcher_module, capital_manager_m
 # ۱۳. دریافت لیست ارزها (تاپ ۱۰۰)
 # ============================================================
 def get_all_symbols(data_fetcher_module) -> list:
-    """دریافت تاپ ۱۰۰ جفت‌ارز USDT بر اساس حجم ۲۴ ساعته."""
     try:
         url = "https://data-api.binance.vision/api/v3/exchangeInfo"
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         data = r.json()
-
         ticker_url = "https://data-api.binance.vision/api/v3/ticker/24hr"
         tr = requests.get(ticker_url, timeout=15)
         tr.raise_for_status()
         tickers = tr.json()
-
         volume_map = {}
         for t in tickers:
             sym = t.get("symbol", "")
@@ -734,22 +653,16 @@ def get_all_symbols(data_fetcher_module) -> list:
                 volume_map[sym] = float(t.get("quoteVolume", 0))
             except (ValueError, TypeError):
                 volume_map[sym] = 0.0
-
         symbols = [
             s["symbol"] for s in data.get("symbols", [])
             if s.get("quoteAsset") == "USDT" and s.get("status") == "TRADING"
         ]
-
         symbols_with_volume = [(sym, volume_map.get(sym, 0)) for sym in symbols]
         symbols_with_volume.sort(key=lambda x: x[1], reverse=True)
-
         top_symbols = [sym for sym, _ in symbols_with_volume[:100]]
-
         logger.info(f"get_all_symbols | total={len(symbols)} | top100 selected")
         logger.info(f"  top5: {[(s, round(v/1e6, 1)) for s, v in symbols_with_volume[:5]]}")
-
         return top_symbols
-
     except Exception as e:
         logger.error(f"get_all_symbols failed | {e}")
         return []
@@ -819,7 +732,6 @@ def main():
     for i, symbol in enumerate(symbols_to_scan, 1):
         if symbol in active_positions:
             continue
-
         try:
             signal = analyze_symbol(
                 symbol=symbol,
@@ -828,7 +740,6 @@ def main():
                 btc_df=btc_df,
                 data_fetcher_module=data_fetcher_module,
             )
-
             if signal:
                 signals_found += 1
                 logger.info(f"signal found | {symbol} | {signal['type']}")
