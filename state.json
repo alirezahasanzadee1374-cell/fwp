@@ -79,8 +79,8 @@
     }
   },
   "listed_symbols": [
-    "RLUSDUSDT",
-    "USDCUSDT"
+    "USDCUSDT",
+    "RLUSDUSDT"
   ],
   "saved_oi": {
     "BTCUSDT": 3461278.250000021,
@@ -137,5 +137,5 @@
     "PUMPUSDT": 5801914.0,
     "EIGENUSDT": 7960653.0
   },
-  "last_updated": 1793499764.895052
+  "last_updated": 1793499816.684991
 }
