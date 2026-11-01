@@ -1,5 +1,5 @@
 """
-main_lpd.py — اجراکننده اصلی پروژه LPD (سکوی پرتاب)
+main_lpd.py — اجراکننده اصلی پروژه LPD (سکوی پرتاب) - نسخه دیباگ کامل
 """
 
 import os
@@ -30,6 +30,7 @@ from lpd.lpd_config import (
     MAX_FOCUS_LIST_SIZE,
     ALERT_DISTANCE_PCT,
     LPD_STATE_FILE,
+    SWING_LOOKBACK_4H,
 )
 
 # ---------- Logging ----------
@@ -199,10 +200,10 @@ def fetch_order_book(symbol: str) -> Optional[dict]:
     return None
 
 # ============================================================
-# ۱. اسکن کامل (برای پر کردن لیست ۲۰ تایی)
+# ۱. اسکن کامل با دیباگ (X-Ray)
 # ============================================================
 def run_full_scan(state: dict, lpd_strategy):
-    logger.info(">>> Starting FULL SCAN to find setups")
+    logger.info(">>> Starting FULL SCAN (DEBUG MODE)")
     whitelist = load_toobit_whitelist()
     symbols = get_top_symbols(whitelist, 100)
     if not symbols: 
@@ -216,30 +217,102 @@ def run_full_scan(state: dict, lpd_strategy):
         try:
             df_4h = fetch_klines(symbol, "4h", 300)
             df_1d = fetch_klines(symbol, "1d", 300)
-            if df_4h is None or df_1d is None: continue
+            if df_4h is None or df_1d is None: 
+                logger.info(f"❌ {symbol} | data missing (4h or 1d)")
+                continue
             
             current_price = float(df_4h["close"].iloc[-1])
-            ob = fetch_order_book(symbol)
-            if not ob: continue
             
-            setup = lpd_strategy.evaluate_lpd_setup(df_4h, df_1d, ob, current_price)
-            if setup:
-                setup["symbol"] = symbol
-                setup["status"] = "waiting"
-                setup["current_price"] = current_price
-                focus_list[symbol] = setup
-                new_setups += 1
-                logger.info(f"⭐ setup found | {symbol} | dist={setup['distance_to_entry']}% | profit={setup['profit_pct']}%")
+            # --- شروع دیباگ ---
+            logger.info(f"🔍 {symbol} | price={current_price}")
+            
+            # ۱. روند
+            trend_4h = lpd_strategy.detect_nouveau_trend(df_4h)
+            trend_1d = lpd_strategy.detect_nouveau_trend(df_1d)
+            if not (trend_4h or trend_1d):
+                logger.info(f"   ⛔ rejected: no uptrend (4h={trend_4h}, 1d={trend_1d})")
+                continue
+                
+            # ۲. فیبوناچی
+            swing_high, swing_low = lpd_strategy.find_swing_levels(df_4h, SWING_LOOKBACK_4H)
+            is_discount, fib_05 = lpd_strategy.check_discount_zone(current_price, swing_high, swing_low)
+            if not is_discount:
+                logger.info(f"   ⛔ rejected: not in discount (price > fib 0.5 = {fib_05:.8f})")
+                continue
+                
+            # ۳. اوردر بلاک
+            ob = lpd_strategy.find_order_block(df_4h)
+            if not ob:
+                logger.info(f"   ⛔ rejected: no order block found")
+                continue
+            ob_high, ob_low = ob
+            
+            # ۴. اردربوک
+            order_book = fetch_order_book(symbol)
+            if not order_book:
+                logger.info(f"   ⛔ rejected: order book unavailable")
+                continue
+            
+            # ۵. تحلیل اردربوک
+            ob_analysis = lpd_strategy.analyze_order_book(order_book, current_price, ob_low, ob_high)
+            if not ob_analysis:
+                logger.info(f"   ⛔ rejected: order book analysis failed")
+                continue
+                
+            # جزئیات تحلیل
+            logger.info(f"   📊 OB={ob_low:.8f}-{ob_high:.8f} | power={ob_analysis['bid_power']}x | whale={ob_analysis['has_whale']} | fuel={ob_analysis['retail_fuel_count']} | barrier={ob_analysis['heavy_barrier_count']}")
+            
+            if not ob_analysis["is_power_valid"]:
+                logger.info(f"   ⛔ rejected: weak power ({ob_analysis['bid_power']}x < 1.5x)")
+                continue
+            if not ob_analysis["has_whale"]:
+                logger.info(f"   ⛔ rejected: no whale wall (bid wall >= $100K)")
+                continue
+            if not ob_analysis["has_fuel"]:
+                logger.info(f"   ⛔ rejected: not enough fuel (retail asks < 2)")
+                continue
+            if not ob_analysis["no_barrier"]:
+                logger.info(f"   ⛔ rejected: heavy barrier in path")
+                continue
+
+            # ۶. سود و فضای پرواز
+            profit_pct, is_valid_target = lpd_strategy.calculate_profit_target(current_price, swing_high)
+            if not is_valid_target:
+                logger.info(f"   ⛔ rejected: target invalid (profit={profit_pct}% < 10.5% or <7%)")
+                continue
+
+            # --- پایان دیباگ ---
+            # همه چیز OK! ستاپ پیدا شد
+            setup = {
+                "symbol": symbol,
+                "type": "LPD_Setup",
+                "entry_price": ob_high,
+                "target_price": swing_high,
+                "profit_pct": profit_pct,
+                "ob_low": ob_low,
+                "ob_high": ob_high,
+                "distance_to_entry": round(abs(current_price - ob_high) / ob_high * 100, 2),
+                "bid_power": ob_analysis["bid_power"],
+                "whale_walls": ob_analysis["whale_walls"],
+                "fuel_count": ob_analysis["retail_fuel_count"],
+                "trend": "4H" if trend_4h else "1D",
+                "status": "waiting",
+                "current_price": current_price,
+            }
+            focus_list[symbol] = setup
+            new_setups += 1
+            logger.info(f"⭐✅ SETUP FOUND | {symbol} | dist={setup['distance_to_entry']}% | profit={profit_pct}%")
+            
         except Exception as e:
-            logger.error(f"scan {symbol} failed | {e}")
+            logger.error(f"❌ scan {symbol} crashed | {e}")
 
         # چاپ پیشرفت هر ۱۰ ارز
         if i % 10 == 0:
-            logger.info(f"progress | {i}/{len(symbols)} | setups={new_setups}")
+            logger.info(f"=== progress | {i}/{len(symbols)} | setups={new_setups} ===")
 
         time.sleep(0.1)
 
-    # مرتب کردن و نگه داشتن ۲۰ تای برتر (نزدیک‌ترین به ورود)
+    # مرتب کردن و نگه داشتن ۲۰ تای برتر
     sorted_focus = sorted(focus_list.items(), key=lambda x: x[1]["distance_to_entry"])
     top_20 = dict(sorted_focus[:MAX_FOCUS_LIST_SIZE])
     
@@ -259,16 +332,13 @@ def run_active_scan(state: dict):
 
     for symbol, setup in list(focus_list.items()):
         try:
-            # گرفتن قیمت لحظه‌ای
             df = fetch_klines(symbol, "4h", 5)
             if df is None: continue
             current_price = float(df["close"].iloc[-1])
             entry_price = setup["entry_price"]
             
-            # فاصله تا ورود
             dist = abs(current_price - entry_price) / entry_price
             
-            # ۱. هشدار ۱٪
             if dist <= ALERT_DISTANCE_PCT and setup["status"] == "waiting":
                 msg = (
                     f"⏳ <b>LPD Ready Alert</b>\n"
@@ -282,7 +352,6 @@ def run_active_scan(state: dict):
                 setup["status"] = "ready"
                 logger.info(f"READY ALERT sent | {symbol} | dist={round(dist*100, 2)}%")
             
-            # ۲. تریگر ورود (قیمت به OB رسید)
             elif current_price <= entry_price and setup["status"] == "ready":
                 msg = (
                     f"🚀🔥 <b>LPD ENTRY SIGNAL</b>\n"
@@ -295,8 +364,7 @@ def run_active_scan(state: dict):
                 setup["status"] = "entered"
                 logger.info(f"ENTRY SIGNAL sent | {symbol}")
 
-            # ۳. ریست (اگر قیمت خیلی از OB دور شد)
-            if dist > 0.05: # بیشتر از ۵٪ فاصله
+            if dist > 0.05:
                 del focus_list[symbol]
                 logger.info(f"removed from focus list | {symbol} | too far from OB")
 
