@@ -9,16 +9,16 @@ import os
 # ============================================================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+MASTER_KEY = os.environ.get("MASTER_KEY", "")  # ✅ این خط اضافه شد
 BYKARANTELI_API_KEY = os.environ.get("BYKARANTELI_API_KEY", "")
 
 # ============================================================
 # تنظیمات زیرساخت (پروکسی‌ها)
 # ============================================================
-# آدرس ورکر کلادفلر که برای بای‌بیت ساختی (مخصوص LPD)
+# آدرس ورکر کلادفلر که برای بای‌بیت ساختی
 BYBIT_PROXY_URL = "https://bybit-proxy.alirezahasanzadee1374.workers.dev"
 
 # صرافی‌های مورد استفاده برای اردربوک (به ترتیب اولویت)
-# OKX و MEXC مستقیم هستند، Bybit از طریق پروکسی بالا
 ORDER_BOOK_EXCHANGES = ["okx", "bybit", "mexc"]
 
 # ============================================================
