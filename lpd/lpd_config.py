@@ -16,13 +16,14 @@ BYBIT_PROXY_URL = "https://bybit-proxy.alirezahasanzadee1374.workers.dev"
 MAX_FOCUS_LIST_SIZE = 20
 SWING_LOOKBACK_4H = 60
 
-# شروط استراتژی
+# شروط پیدا کردن (آسان)
+MIN_PROFIT_PCT = 0.07
+
+# شروط ورود (سخت‌گیرانه)
 FIB_DISCOUNT_LEVEL = 0.5
 MIN_BID_WALL_USD = 100_000
 MIN_POWER_RATIO = 1.5
 MAX_RETAIL_ASK_USD = 50_000
-MIN_PROFIT_PCT = 0.07
-MIN_SAFETY_MARGIN_PCT = 0.105
 ALERT_DISTANCE_PCT = 0.01
 
 # شروط خروج
