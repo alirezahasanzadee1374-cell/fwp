@@ -39,39 +39,14 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MASTER_KEY: ${{ secrets.MASTER_KEY }}
 
-      - name: Commit state (merge-aware)
+      - name: Commit state
         if: always()
         run: |
           git config --local user.email "fwp-bot@users.noreply.github.com"
           git config --local user.name "FWP Bot"
-          for i in 1 2 3; do
-            cp state.json /tmp/state_local.json 2>/dev/null || true
-            git checkout -- state.json 2>/dev/null || true
-            git pull --no-rebase origin main 2>/dev/null || true
-            python3 -c "
-          import json, os
-          local_path = '/tmp/state_local.json'
-          if os.path.exists(local_path):
-              with open(local_path) as f:
-                  local = json.load(f)
-              with open('state.json') as f:
-                  remote = json.load(f)
-              remote['saved_whale_orders'] = local.get('saved_whale_orders', remote.get('saved_whale_orders', {}))
-              remote['saved_oi'] = local.get('saved_oi', remote.get('saved_oi', {}))
-              remote['listed_symbols'] = local.get('listed_symbols', remote.get('listed_symbols', []))
-              remote['last_updated'] = local.get('last_updated', remote.get('last_updated', 0))
-              with open('state.json', 'w') as f:
-                  json.dump(remote, f, indent=2, ensure_ascii=False)
-              print('State merged successfully')
-          "
-            git add state.json
-            git diff --staged --quiet || git commit -m "FWP full state update (merged) [skip ci]"
-            if git push origin main 2>/dev/null; then
-              echo "Push succeeded"
-              break
-            fi
-            sleep 2
-          done
+          git add state_whales.json 2>/dev/null || true
+          git diff --quiet && git diff --staged --quiet || git commit -m "FWP whales update [skip ci]"
+          git push || true
 
       - name: Upload logs (on failure)
         if: failure()
