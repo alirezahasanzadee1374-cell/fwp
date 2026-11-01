@@ -1,4 +1,205 @@
 {
-  "focus_list": {},
-  "scan_index": 100
+  "focus_list": {
+    "HAEDALUSDT": {
+      "symbol": "HAEDALUSDT",
+      "target_price": 0.03395,
+      "profit_pct": 39.43,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565406.2443388
+    },
+    "SKYUSDT": {
+      "symbol": "SKYUSDT",
+      "target_price": 0.07358,
+      "profit_pct": 9.2,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565409.0991642
+    },
+    "RADUSDT": {
+      "symbol": "RADUSDT",
+      "target_price": 0.291,
+      "profit_pct": 23.31,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565410.211787
+    },
+    "SENTUSDT": {
+      "symbol": "SENTUSDT",
+      "target_price": 0.02463,
+      "profit_pct": 25.28,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565411.3890302
+    },
+    "ACEUSDT": {
+      "symbol": "ACEUSDT",
+      "target_price": 0.1542,
+      "profit_pct": 13.05,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565412.6059043
+    },
+    "JUPUSDT": {
+      "symbol": "JUPUSDT",
+      "target_price": 0.3162,
+      "profit_pct": 23.52,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565414.8305986
+    },
+    "FFUSDT": {
+      "symbol": "FFUSDT",
+      "target_price": 0.10353,
+      "profit_pct": 15.78,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565417.1848116
+    },
+    "WINUSDT": {
+      "symbol": "WINUSDT",
+      "target_price": 7.25e-05,
+      "profit_pct": 8.4,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565420.3835073
+    },
+    "1INCHUSDT": {
+      "symbol": "1INCHUSDT",
+      "target_price": 0.0924,
+      "profit_pct": 13.1,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565423.7939298
+    },
+    "SPKUSDT": {
+      "symbol": "SPKUSDT",
+      "target_price": 0.0212,
+      "profit_pct": 26.18,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565424.9986217
+    },
+    "STOUSDT": {
+      "symbol": "STOUSDT",
+      "target_price": 0.0341,
+      "profit_pct": 12.54,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565426.0904531
+    },
+    "ARPAUSDT": {
+      "symbol": "ARPAUSDT",
+      "target_price": 0.0105,
+      "profit_pct": 4.37,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565428.4385707
+    },
+    "BANKUSDT": {
+      "symbol": "BANKUSDT",
+      "target_price": 0.0336,
+      "profit_pct": 29.73,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565429.6324244
+    },
+    "TREEUSDT": {
+      "symbol": "TREEUSDT",
+      "target_price": 0.0736,
+      "profit_pct": 109.69,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565431.5245237
+    },
+    "HYPERUSDT": {
+      "symbol": "HYPERUSDT",
+      "target_price": 0.07,
+      "profit_pct": 17.85,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565433.2930727
+    },
+    "TSTUSDT": {
+      "symbol": "TSTUSDT",
+      "target_price": 0.01573,
+      "profit_pct": 20.08,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565435.3836348
+    },
+    "ENSOUSDT": {
+      "symbol": "ENSOUSDT",
+      "target_price": 0.685,
+      "profit_pct": 24.32,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565436.6616518
+    },
+    "BOMEUSDT": {
+      "symbol": "BOMEUSDT",
+      "target_price": 0.0006884,
+      "profit_pct": 14.33,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565448.2819326
+    },
+    "NEWTUSDT": {
+      "symbol": "NEWTUSDT",
+      "target_price": 0.05096,
+      "profit_pct": 18.76,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565453.5532503
+    },
+    "ZKCUSDT": {
+      "symbol": "ZKCUSDT",
+      "target_price": 0.04,
+      "profit_pct": 25.39,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793565455.4099739
+    }
+  },
+  "scan_index": 200
 }
