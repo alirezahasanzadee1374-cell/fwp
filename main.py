@@ -40,6 +40,7 @@ from config import (
     MINOR_CORRECTION_MAX_SELLER_RATIO,
     SMART_TARGET_MIN_WALL_PCT,
     ALERT_PRIORITY,
+    STABLECOIN_BLACKLIST,  # ✅ جدید
 )
 
 # ---------- Logging ----------
@@ -294,7 +295,7 @@ def detect_early_confirmation(symbol: str, current_price: float, whale_walls: di
 # ============================================================
 # ۶. رد پای فروش فوری (قانون ۴۳)
 # ============================================================
-def detect_urgent_sell(symbol: str, order_book: dict, current_oi: Optional[float], power: dict) -> Optional[dict]:
+def detect_urgent_sell(symbol: str, order_book: dict, current_oi: Optional[float], power: dict, data_fetcher_module=None) -> Optional[dict]:
     triggers = []
     if current_oi is not None and symbol in _saved_oi:
         old_oi = _saved_oi[symbol]
@@ -311,6 +312,16 @@ def detect_urgent_sell(symbol: str, order_book: dict, current_oi: Optional[float
                 key = _order_key(symbol, "ask", p)
                 if key not in saved_whale_orders:
                     triggers.append(f"new ask wall ${p*q:.0f}")
+
+    # ✅ قانون ۴۳: Whale Tape — فشار فروش نهنگ‌ها
+    if data_fetcher_module:
+        try:
+            wf = data_fetcher_module.get_whale_flow(symbol, hours=1)
+            if wf and wf.get("pressure") == "sell" and wf.get("sell_usd", 0) > 500_000:
+                triggers.append(f"whale selling ${wf['sell_usd']:.0f}")
+        except Exception as e:
+            logger.warning(f"whale tape check failed | {symbol} | {e}")
+
     if triggers:
         return {"symbol": symbol, "triggers": triggers}
     return None
@@ -338,9 +349,21 @@ def is_meme_coin(symbol: str) -> bool:
     return base in [m.upper() for m in MEME_COINS_WHITELIST]
 
 # ============================================================
+# ✅ ۸.۵. فیلتر استیبل‌کوین (قانون ۴۵ — نویز صفر)
+# ============================================================
+def is_stablecoin(symbol: str) -> bool:
+    """چک می‌کنه آیا ارز استیبل‌کوین یا pegged هست (نباید سیگنال بده)"""
+    base = symbol.replace("USDT", "").upper()
+    return base in STABLECOIN_BLACKLIST
+
+# ============================================================
 # ۹. تحلیل یک ارز
 # ============================================================
 def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_module):
+    # ✅ فیلتر استیبل‌کوین‌ها (FDUSD، USDC، RLUSD، ...)
+    if is_stablecoin(symbol):
+        return None
+
     is_meme = is_meme_coin(symbol)
     df_4h = data_fetcher_module.get_klines(symbol, "4h", KLINE_LIMIT)
     df_1d = data_fetcher_module.get_klines(symbol, "1d", KLINE_LIMIT)
@@ -464,6 +487,14 @@ def analyze_symbol(symbol, strategy_module, all_news, btc_df, data_fetcher_modul
             return None
         update_saved_whale_orders(symbol, whale_walls, time.time())
 
+    # ✅ قانون ۱۶: تایید Whale Tape برای پلاتینیوم (آلت‌کوین‌ها)
+    if signal and signal.get("type") == "platinum":
+        wf = data_fetcher_module.get_whale_flow(symbol, hours=1)
+        if wf and wf.get("pressure") == "sell" and wf.get("sell_usd", 0) > 100_000:
+            logger.warning(f"platinum rejected | {symbol} | whale selling ${wf['sell_usd']:.0f}")
+            return None
+        logger.info(f"platinum whale check OK | {symbol} | pressure={wf.get('pressure') if wf else 'no_data'}")
+
     return signal
 
 # ============================================================
@@ -555,7 +586,8 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
             current_oi = data_fetcher_module.get_open_interest(symbol)
             power = strategy_module.calculate_power(order_book, current_price) if order_book else {"winner": "none", "ratio": 0}
 
-            urgent = detect_urgent_sell(symbol, order_book, current_oi, power)
+            # ✅ قانون ۴۳: پاس دادن data_fetcher_module برای Whale Tape
+            urgent = detect_urgent_sell(symbol, order_book, current_oi, power, data_fetcher_module)
             if urgent:
                 alerts_buffer.append(("urgent_sell", f"🚨 <b>رد پای فروش!</b>\nارز: {symbol}\nنشانه‌ها: {', '.join(urgent['triggers'])}\nاقدام: خروج!"))
                 skip_lower = True
@@ -568,6 +600,17 @@ def manage_active_positions(strategy_module, data_fetcher_module, capital_manage
                     logger.info(f"fuel exhausted | {symbol}")
                     alerts_buffer.append(("urgent_sell", f"⛽ <b>سوخت شورت تموم شد</b>\nارز: {symbol}\nاقدام: با سود فعلی خارج شوید."))
                     skip_lower = True
+
+        # ✅ قانون ۲۲: ByKaranteli — لیکویید واقعی شورت‌ها
+        if not skip_lower:
+            try:
+                liq_state = data_fetcher_module.get_liquidation_data(symbol)
+                if liq_state and liq_state.get("fuel_exhausted"):
+                    logger.info(f"fuel exhausted (bykaranteli) | {symbol} | {liq_state.get('reason')}")
+                    alerts_buffer.append(("urgent_sell", f"⛽ <b>سوخت شورت تموم شد</b>\nارز: {symbol}\nدلیل: {liq_state.get('reason')}"))
+                    skip_lower = True
+            except Exception as e:
+                logger.warning(f"bykaranteli liq check failed | {symbol} | {e}")
 
         if not skip_lower and order_book:
             clear_path_check = strategy_module.detect_clear_path(order_book, current_price)
