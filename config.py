@@ -17,7 +17,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 MASTER_KEY = os.environ.get("MASTER_KEY", "")
 
 # ============================================================
-# ✅ جدید: ByKaranteli API (از GitHub Secrets)
+# ByKaranteli API (از GitHub Secrets)
 # ============================================================
 BYKARANTELI_API_KEY = os.environ.get("BYKARANTELI_API_KEY", "")
 
@@ -102,12 +102,29 @@ DECOUPLING_ALT_THRESHOLD = 0.00
 MEME_COINS_WHITELIST = ["DOGE", "SHIB", "PEPE", "WIF", "BONK", "FLOKI", "BOME"]
 
 # ============================================================
-# ✅ جدید: استیبل‌کوین‌ها و pegged tokens (نباید سیگنال بدن)
+# استیبل‌کوین‌ها و pegged tokens (نباید سیگنال بدن)
 # ============================================================
 STABLECOIN_BLACKLIST = [
     "USDC", "FDUSD", "DAI", "TUSD", "BUSD", "RLUSD", "USD1",
     "PYUSD", "USDP", "USDD", "FRAX", "LUSD", "GUSD",
     "EUR", "EURS", "XAUT", "PAXG",
+]
+
+# ============================================================
+# ✅ جدید: توکن‌های سهام و RWA (نباید سیگنال بدن)
+# ============================================================
+STOCK_TOKEN_BLACKLIST = [
+    "NVDAB",     # Nvidia
+    "MSTRB",     # MicroStrategy
+    "INTCB",     # Intel
+    "SPCXB",     # SpaceX
+    "CRCLB",     # Circle
+    "SNDKB",     # Sandisk
+    "SOXLB",     # شاخص نیمه‌هادی‌ها
+    "INTWB",     # Intuit
+    "MARSCOIN",  # ناشناخته
+    "RWUSD",     # RWA
+    "牛来",       # نماد چینی
 ]
 
 # ============================================================
@@ -167,7 +184,7 @@ WHALE_INTENT_MIN_FUEL_USD = MIN_WHALE_WALL_USD
 WHALE_INTENT_TARGET_PCT = 0.10
 
 # ============================================================
-# ✅ تغییر: قانون ۲۹ (تاییدیه زودهنگام — از ۰٪ به ۷.۵٪)
+# قانون ۲۹: تاییدیه زودهنگام (از ۰٪ به ۷.۵٪)
 # ============================================================
 EARLY_CONFIRMATION_GAP_PCT = 0.0
 
