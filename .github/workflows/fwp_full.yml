@@ -44,10 +44,21 @@ jobs:
         run: |
           git config --local user.email "fwp-bot@users.noreply.github.com"
           git config --local user.name "FWP Bot"
-          git add state_whales.json 2>/dev/null || true
-          git diff --quiet && git diff --staged --quiet || git commit -m "FWP whales update [skip ci]"
-          git pull --rebase origin main || true
-          git push || true
+          cp state_whales.json /tmp/state_whales_new.json 2>/dev/null || true
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            echo "=== Push attempt $i ==="
+            git fetch origin main 2>&1 || true
+            git reset --hard origin/main 2>&1 || true
+            cp /tmp/state_whales_new.json state_whales.json 2>/dev/null || true
+            git add state_whales.json 2>/dev/null || true
+            git commit -m "FWP whales update [skip ci]" 2>&1 || true
+            if git push origin main 2>&1; then
+              echo "=== Push succeeded on attempt $i ==="
+              break
+            fi
+            echo "=== Push rejected, retrying in 5s ==="
+            sleep 5
+          done
 
       - name: Upload logs (on failure)
         if: failure()
