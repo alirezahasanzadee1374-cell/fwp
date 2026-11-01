@@ -3,7 +3,9 @@ data_fetcher.py — فقط دریافت دیتا برای پروژه FWP
 هیچ منطق معامله‌ای اینجا نیست. فقط دیتا.
 """
 
+import os
 import time
+import datetime
 import logging
 from typing import Optional
 
@@ -28,7 +30,7 @@ logging.basicConfig(
 logger = logging.getLogger("FWP.DataFetcher")
 
 # ---------- ثابت‌ها ----------
-TIMEOUT = 10  # ثانیه
+TIMEOUT = 10
 
 BINANCE_SPOT_MIRROR = "https://data-api.binance.vision"
 BINANCE_FUTURES = "https://fapi.binance.com"
@@ -45,38 +47,33 @@ DEFAULT_RSS_FEEDS = [
 _COINGECKO_CACHE: dict = {
     "data": None,
     "fetched_at": 0.0,
-    "ttl": 300,  # ۵ دقیقه
+    "ttl": 300,
 }
 
 # ============================================================
 # توابع کمکی
 # ============================================================
 def _base_asset(symbol: str) -> str:
-    """BTCUSDT → BTC | 1000PEPEUSDT → 1000PEPE"""
     for quote in ("USDT", "USDC", "BUSD", "USD"):
         if symbol.upper().endswith(quote):
             return symbol[: -len(quote)]
     return symbol
 
 def _to_okx_symbol(symbol: str) -> str:
-    """BTCUSDT → BTC-USDT"""
     base = _base_asset(symbol)
     quote = symbol[len(base):]
     return f"{base}-{quote}"
 
 def _to_ccxt_symbol(symbol: str) -> str:
-    """BTCUSDT → BTC/USDT"""
     base = _base_asset(symbol)
     quote = symbol[len(base):]
     return f"{base}/{quote}"
 
 def _bybit_interval(interval: str) -> str:
-    """4h → 240 | 1d → D | 1m → 1"""
     mapping = {"1m": "1", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "4h": "240", "1d": "D"}
     return mapping.get(interval, "240")
 
 def _okx_interval(interval: str) -> str:
-    """4h → 4H | 1d → 1D | 1m → 1m"""
     mapping = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1H", "4h": "4H", "1d": "1D"}
     return mapping.get(interval, "4H")
 
@@ -84,8 +81,6 @@ def _okx_interval(interval: str) -> str:
 # ۱. کندل‌ها (OHLCV)
 # ============================================================
 def get_klines(symbol: str, interval: str = "4h", limit: int = 300) -> Optional[pd.DataFrame]:
-    """دریافت کندل OHLCV با fallback سه‌مرحله‌ای."""
-
     # ---- بایننس ----
     try:
         url = f"{BINANCE_SPOT_MIRROR}/api/v3/klines"
@@ -130,7 +125,7 @@ def get_klines(symbol: str, interval: str = "4h", limit: int = 300) -> Optional[
     except Exception as e:
         logger.warning(f"get_klines bybit failed | {symbol} | {e}")
 
-    # ---- اوکی‌اکس ----
+    # ---- OKX ----
     try:
         url = f"{OKX_BASE}/api/v5/market/candles"
         params = {"instId": _to_okx_symbol(symbol), "bar": _okx_interval(interval), "limit": limit}
@@ -154,14 +149,9 @@ def get_klines(symbol: str, interval: str = "4h", limit: int = 300) -> Optional[
     return None
 
 # ============================================================
-# ۲. اردربوک تک‌صرافی (۷ صرافی)
+# ۲. اردربوک تک‌صرافی (OKX → Kucoin → MEXC → Bitget → Gate → Binance → Bybit)
 # ============================================================
 def get_order_book(symbol: str, limit: int = 100) -> Optional[dict]:
-    """
-    اردربوک با fallback ۷ صرافی.
-    ترتیب: OKX → Kucoin → MEXC → Bitget → Gate → Binance → Bybit
-    """
-
     # ---- ۱. OKX ----
     try:
         url = f"{OKX_BASE}/api/v5/market/books"
@@ -244,7 +234,7 @@ def get_order_book(symbol: str, limit: int = 100) -> Optional[dict]:
     except Exception as e:
         logger.warning(f"get_order_book gate failed | {symbol} | {e}")
 
-    # ---- ۶. Binance (fallback آخر) ----
+    # ---- ۶. Binance ----
     try:
         url = f"{BINANCE_FUTURES}/fapi/v1/depth"
         params = {"symbol": symbol, "limit": limit}
@@ -259,7 +249,7 @@ def get_order_book(symbol: str, limit: int = 100) -> Optional[dict]:
     except Exception as e:
         logger.warning(f"get_order_book binance failed | {symbol} | {e}")
 
-    # ---- ۷. Bybit (fallback آخر) ----
+    # ---- ۷. Bybit ----
     try:
         url = f"{BYBIT_BASE}/v5/market/orderbook"
         params = {"category": "linear", "symbol": symbol, "limit": limit}
@@ -282,8 +272,6 @@ def get_order_book(symbol: str, limit: int = 100) -> Optional[dict]:
 # ۳. OI (OKX اول)
 # ============================================================
 def get_open_interest(symbol: str) -> Optional[float]:
-    """OI (OKX اول)."""
-
     try:
         url = f"{OKX_BASE}/api/v5/public/open-interest"
         params = {"instType": "SWAP", "instId": _to_okx_symbol(symbol) + "-SWAP"}
@@ -332,8 +320,6 @@ def get_open_interest(symbol: str) -> Optional[float]:
 # ۴. فاندینگ ریت
 # ============================================================
 def get_funding_rate(symbol: str) -> Optional[float]:
-    """فاندینگ از بایننس → بای‌بیت."""
-
     try:
         url = f"{BINANCE_FUTURES}/fapi/v1/premiumIndex"
         params = {"symbol": symbol}
@@ -367,7 +353,6 @@ def get_funding_rate(symbol: str) -> Optional[float]:
 # ۵. مارکت‌کپ CoinGecko + fallback
 # ============================================================
 def _refresh_coingecko_cache(retry_on_429: bool = True) -> None:
-    """پر کردن کش CoinGecko با retry 429."""
     now = time.time()
     if _COINGECKO_CACHE["data"] is not None and (now - _COINGECKO_CACHE["fetched_at"]) < _COINGECKO_CACHE["ttl"]:
         return
@@ -416,7 +401,6 @@ def _refresh_coingecko_cache(retry_on_429: bool = True) -> None:
         logger.error(f"CoinGecko refresh failed | {e}")
 
 def get_market_cap(symbol: str) -> Optional[dict]:
-    """مارکت‌کپ CoinGecko + fallback از بایننس."""
     _refresh_coingecko_cache()
     cache = _COINGECKO_CACHE["data"] or {}
 
@@ -455,7 +439,6 @@ def get_market_cap(symbol: str) -> Optional[dict]:
 # ۶. اخبار RSS
 # ============================================================
 def get_news_rss(feed_urls: Optional[list] = None, max_per_feed: int = 20) -> list:
-    """خواندن اخبار از فیدهای RSS."""
     if feed_urls is None:
         feed_urls = DEFAULT_RSS_FEEDS
 
@@ -481,7 +464,6 @@ def get_news_rss(feed_urls: Optional[list] = None, max_per_feed: int = 20) -> li
 # ۷. اردربوک چندصرافی + هم‌پوشانی
 # ============================================================
 def get_order_book_all_exchanges(symbol: str, min_wall_usd: float = MIN_WHALE_WALL_USD) -> dict:
-    """اردربوک از OKX + Kucoin + MEXC + هم‌پوشانی بین‌صرافی."""
     exchange_names = OVERLAP_EXCHANGES
     exchange_instances = {
         "okx": ccxt.okx({"enableRateLimit": True}),
@@ -519,7 +501,6 @@ def get_order_book_all_exchanges(symbol: str, min_wall_usd: float = MIN_WHALE_WA
             logger.warning(f"get_order_book_all failed | {name} | {e}")
         time.sleep(1)
 
-    # ---- هم‌پوشانی ----
     overlap = []
     for side_key, side_name in (("bids", "bid"), ("asks", "ask")):
         all_walls = []
@@ -563,5 +544,173 @@ def get_order_book_all_exchanges(symbol: str, min_wall_usd: float = MIN_WHALE_WA
 # ۸. کندل ۱ دقیقه
 # ============================================================
 def get_klines_1m(symbol: str, limit: int = 30) -> Optional[pd.DataFrame]:
-    """کندل ۱ دقیقه — از همون get_klines با interval='1m'."""
     return get_klines(symbol=symbol, interval="1m", limit=limit)
+
+# ============================================================
+# ✅ ۹. ByKaranteli — لیکویید واقعی و Whale Tape (کش ۱۵ دقیقه)
+# ============================================================
+BYKARANTELI_BASE = "https://bykaranteli.com"
+_BYKAR_CACHE: dict = {}
+_BYKAR_CACHE_TTL = 900  # ۱۵ دقیقه
+
+
+def _bykar_cached(key: str, fetcher):
+    now = time.time()
+    if key in _BYKAR_CACHE:
+        entry = _BYKAR_CACHE[key]
+        if now - entry["ts"] < _BYKAR_CACHE_TTL:
+            return entry["data"]
+    result = fetcher()
+    _BYKAR_CACHE[key] = {"data": result, "ts": now}
+    return result
+
+
+def _fetch_liquidation_data(symbol: str) -> Optional[dict]:
+    """دریافت دیتای لیکویید شورت/لانگ از LiqMap (قانون ۲۲)"""
+    api_key = os.environ.get("BYKARANTELI_API_KEY", "")
+    if not api_key:
+        logger.info("bykaranteli api key missing")
+        return None
+
+    base = _base_asset(symbol)
+    try:
+        url = f"{BYKARANTELI_BASE}/api/liqmap/public"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        params = {"symbol": base}
+        r = requests.get(url, headers=headers, params=params, timeout=15)
+        if r.status_code != 200:
+            logger.warning(f"bykaranteli liqmap failed | {symbol} | status={r.status_code}")
+            return None
+        data = r.json()
+        if not data.get("ok"):
+            return None
+
+        points = data.get("real_liquidations", {}).get("points", [])
+        if not points:
+            return {"fuel_exhausted": False, "reason": "no points"}
+
+        now_ms = time.time() * 1000
+        h0_start = now_ms - 3_600_000     # ۰-۱ ساعت اخیر
+        h1_start = now_ms - 7_200_000     # ۱-۲ ساعت اخیر
+        h2_start = now_ms - 10_800_000    # ۲-۳ ساعت اخیر
+
+        short_h0 = 0.0
+        short_h1 = 0.0
+        short_h2 = 0.0
+        long_h0 = 0.0
+
+        for p in points:
+            t = p.get("time", 0)
+            side = p.get("side", "")
+            usd = float(p.get("notional_usd", 0))
+            if side == "short":
+                if t >= h0_start:
+                    short_h0 += usd
+                elif t >= h1_start:
+                    short_h1 += usd
+                elif t >= h2_start:
+                    short_h2 += usd
+            elif side == "long" and t >= h0_start:
+                long_h0 += usd
+
+        # قاعده ۱: ۱-۲ ساعت قبل لیکویید شورت زیاد بود ولی ۰-۱ افت شدید
+        if short_h1 > 500_000 and short_h0 < short_h1 * 0.3:
+            return {
+                "fuel_exhausted": True,
+                "reason": f"short liq crashed {short_h1:.0f} → {short_h0:.0f}",
+                "short_h0": short_h0,
+                "short_h1": short_h1,
+                "long_h0": long_h0,
+            }
+
+        # قاعده ۲: لیکویید شورت تقریبا صفر، لانگ‌ها بالا
+        if short_h0 < 20_000 and long_h0 > 200_000:
+            return {
+                "fuel_exhausted": True,
+                "reason": f"no short liq (${short_h0:.0f}), long liq rising (${long_h0:.0f})",
+                "short_h0": short_h0,
+                "short_h1": short_h1,
+                "long_h0": long_h0,
+            }
+
+        return {
+            "fuel_exhausted": False,
+            "reason": f"short_1h=${short_h0:.0f}",
+            "short_h0": short_h0,
+            "short_h1": short_h1,
+            "long_h0": long_h0,
+        }
+    except Exception as e:
+        logger.warning(f"bykaranteli liquidation fetch failed | {symbol} | {e}")
+        return None
+
+
+def _fetch_whale_flow(symbol: str, hours: int = 1) -> Optional[dict]:
+    """دریافت Whale Tape — فشار نهنگ (قانون ۴۳ و ۱۶)"""
+    api_key = os.environ.get("BYKARANTELI_API_KEY", "")
+    if not api_key:
+        return None
+
+    try:
+        url = f"{BYKARANTELI_BASE}/api/public/whales"
+        headers = {"Authorization": f"Bearer {api_key}"}
+        r = requests.get(url, headers=headers, timeout=15)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        recent = data.get("recent", [])
+        if not recent:
+            return None
+
+        cutoff = time.time() - (hours * 3600)
+        buy_usd = 0.0
+        sell_usd = 0.0
+        trade_count = 0
+
+        for trade in recent:
+            if trade.get("symbol") != symbol:
+                continue
+            try:
+                ts_str = trade.get("trade_time", "").replace("Z", "+00:00")
+                ts = datetime.datetime.fromisoformat(ts_str).timestamp()
+            except Exception:
+                continue
+            if ts < cutoff:
+                continue
+            usd = float(trade.get("quote_qty", 0))
+            if trade.get("side") == "BUY":
+                buy_usd += usd
+            elif trade.get("side") == "SELL":
+                sell_usd += usd
+            trade_count += 1
+
+        if trade_count == 0:
+            return None
+
+        if sell_usd > buy_usd * 1.3 and sell_usd > 100_000:
+            pressure = "sell"
+        elif buy_usd > sell_usd * 1.3 and buy_usd > 100_000:
+            pressure = "buy"
+        else:
+            pressure = "balanced"
+
+        return {
+            "buy_usd": buy_usd,
+            "sell_usd": sell_usd,
+            "trade_count": trade_count,
+            "pressure": pressure,
+            "hours": hours,
+        }
+    except Exception as e:
+        logger.warning(f"bykaranteli whale tape failed | {symbol} | {e}")
+        return None
+
+
+def get_liquidation_data(symbol: str) -> Optional[dict]:
+    """دیتای لیکویید برای قانون ۲۲ (کش ۱۵ دقیقه)"""
+    return _bykar_cached(f"liq_{symbol}", lambda: _fetch_liquidation_data(symbol))
+
+
+def get_whale_flow(symbol: str, hours: int = 1) -> Optional[dict]:
+    """Whale Tape برای قانون ۴۳ و ۱۶ (کش ۱۵ دقیقه)"""
+    return _bykar_cached(f"whale_{symbol}_{hours}", lambda: _fetch_whale_flow(symbol, hours))
