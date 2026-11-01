@@ -9,9 +9,19 @@
       "ob_high": null,
       "ob_low": null,
       "added_at": 1793570744.1477711
+    },
+    "EDENUSDT": {
+      "symbol": "EDENUSDT",
+      "target_price": 0.0612,
+      "profit_pct": 8.8,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793571810.8657336
     }
   },
-  "scan_index": 100,
+  "scan_index": 200,
   "active_position": null,
   "last_pos_check": 0
 }
