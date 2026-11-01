@@ -43,6 +43,41 @@ def get_orderbook_okx_futures(symbol: str) -> Optional[dict]:
         logger.error(f"❌ Binance Spot OB failed | {symbol} | {e}")
     return None
 
+# ============================================================
+# ✅ جدید: دریافت معاملات واقعی از OKX (برای تایید ۱۰۰٪)
+# ============================================================
+def get_recent_trades_okx(symbol: str, limit: int = 100) -> Optional[list]:
+    """
+    دریافت ۱۰۰ معامله اخیر از OKX فیوچرز.
+    این تنها راه تشخیص واقعی «پر شدن سفارش» از «لغو شدن» هست.
+    """
+    try:
+        base = symbol[:-4]
+        r = requests.get(
+            "https://www.okx.com/api/v5/market/trades",
+            params={"instId": f"{base}-USDT-SWAP", "limit": limit},
+            timeout=5
+        )
+        r.raise_for_status()
+        js = r.json()
+        if js.get("data"):
+            trades = []
+            for t in js["data"]:
+                try:
+                    trades.append({
+                        "price": float(t["px"]),
+                        "size": float(t["sz"]),
+                        "side": t["side"],          # "buy" یا "sell"
+                        "ts": int(t["ts"])           # timestamp (ms)
+                    })
+                except (KeyError, ValueError):
+                    continue
+            logger.debug(f"trades OK | {symbol} | {len(trades)} trades")
+            return trades
+    except Exception as e:
+        logger.warning(f"⚠️ OKX Trades failed | {symbol} | {e}")
+    return None
+
 def _fetch_bykaranteli(path: str, params: dict, key_type: str) -> Optional[dict]:
     keys = [BYKARANTELI_KEY_LPD, BYKARANTELI_KEY_FWP] if key_type == "LPD" else [BYKARANTELI_KEY_FWP, BYKARANTELI_KEY_LPD]
     for key in keys:
