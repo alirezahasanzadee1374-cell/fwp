@@ -1,5 +1,5 @@
 """
-main_lpd.py — اجراکننده اصلی LPD
+main_lpd.py — اجراکننده اصلی LPD (با لاگ‌های دقیق برای دیباگ)
 """
 import os, sys, time, json, base64, hashlib, logging, importlib, tempfile
 from typing import Optional
@@ -39,8 +39,13 @@ def send_telegram(msg: str):
 
 def load_state() -> dict:
     if os.path.exists(LPD_STATE_FILE):
-        try: return json.load(open(LPD_STATE_FILE, "r", encoding="utf-8"))
-        except: pass
+        try:
+            data = json.load(open(LPD_STATE_FILE, "r", encoding="utf-8"))
+            logger.info(f"📂 state loaded | focus={len(data.get('focus_list', {}))} | active={bool(data.get('active_position'))}")
+            return data
+        except Exception as e:
+            logger.error(f"❌ state file corrupt | {e}")
+    logger.warning(f"⚠️ state file not found ({LPD_STATE_FILE}) — starting fresh")
     return {"focus_list": {}, "scan_index": 0, "active_position": None, "last_pos_check": 0}
 
 def save_state(state: dict):
@@ -49,8 +54,12 @@ def save_state(state: dict):
     except Exception as e: logger.error(f"❌ Save failed | {e}")
 
 def run_full_scan(state, strategy):
-    if len(state["focus_list"]) >= MAX_FOCUS_LIST_SIZE: return
-    if state.get("active_position"): return
+    if len(state["focus_list"]) >= MAX_FOCUS_LIST_SIZE:
+        logger.info(f"⏸ Focus full ({MAX_FOCUS_LIST_SIZE}) — skipping scan")
+        return
+    if state.get("active_position"): 
+        logger.info("⏸ Active position exists — skipping scan")
+        return
 
     try:
         r = requests.get("https://api.toobit.com/api/v1/exchangeInfo", timeout=15).json()
@@ -88,11 +97,13 @@ def run_full_scan(state, strategy):
     logger.info(f"✅ Scan done | +{new_setups} | total {len(state['focus_list'])}")
 
 def run_active_scan(state, strategy):
+    logger.info("👁 Active scan started")
+    
     pos = state.get("active_position")
     
     if pos:
         if time.time() - state.get("last_pos_check", 0) < POSITION_CHECK_INTERVAL:
-            logger.info(f"⏸ Pos throttled")
+            logger.info(f"⏸ Pos throttled ({int(time.time()-state.get('last_pos_check',0))}s < 180s)")
             return
         logger.info(f"🎯 MONITOR | {pos['symbol']}")
         df = get_klines_binance(pos['symbol'], "4h", 5)
@@ -121,9 +132,13 @@ def run_active_scan(state, strategy):
         save_state(state)
         return
 
-    if not state["focus_list"]: return
+    if not state["focus_list"]:
+        logger.info("📭 focus list empty — nothing to monitor")
+        return
     
+    logger.info(f"🔍 checking {len(state['focus_list'])} symbols in focus list")
     sorted_focus = sorted(state["focus_list"].items(), key=lambda x: x[1].get("added_at", 0), reverse=True)
+    
     for sym, setup in sorted_focus:
         df = get_klines_binance(sym, "4h", 100)
         if df is None: continue
@@ -160,7 +175,7 @@ def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "full"
     logger.info(f"▶️ LPD {mode.upper()}")
     strategy = load_lpd_strategy()
-    state = load_state()
+    state = load_state()  # <--- حالا لاگ می‌ده که استیت چی لود شد
     if mode == "active": run_active_scan(state, strategy)
     else: run_full_scan(state, strategy)
 
