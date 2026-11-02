@@ -30,16 +30,6 @@
       "ob_low": null,
       "added_at": 1793577674.3238826
     },
-    "SOMIUSDT": {
-      "symbol": "SOMIUSDT",
-      "target_price": 0.201,
-      "profit_pct": 8.71,
-      "status": "waiting",
-      "initial_whale_usd": 0,
-      "ob_high": null,
-      "ob_low": null,
-      "added_at": 1793577688.0387154
-    },
     "PEPEUSDT": {
       "symbol": "PEPEUSDT",
       "target_price": 5.68e-06,
