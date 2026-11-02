@@ -1,7 +1,7 @@
 """
 lpd_data.py — دریافت دیتاهای LPD
 """
-import os, time, requests, logging, html
+import os, time, requests, logging, html, json
 import pandas as pd
 from typing import Optional
 from lpd.lpd_config import *
@@ -9,16 +9,26 @@ from lpd.lpd_config import *
 logger = logging.getLogger("LPD.Data")
 
 # ============================================================
-# ✅ اعلام خرابی API به تلگرام (بدون لو دادن کلید)
+# ✅ کش پایدار (ذخیره تو فایل تا بین اجراها گم نشه)
 # ============================================================
-_API_FAIL_CACHE: dict = {}
-_API_FAIL_COOLDOWN = 1800  # ۳۰ دقیقه
+_API_CACHE_FILE = "lpd_api_cache.json"
 
-_API_HEALTH_CACHE: dict = {}
+def _load_cache() -> dict:
+    if os.path.exists(_API_CACHE_FILE):
+        try:
+            return json.load(open(_API_CACHE_FILE, "r", encoding="utf-8"))
+        except Exception:
+            pass
+    return {"fail": {}, "health_last": 0, "health_state": {}}
+
+def _save_cache(cache: dict) -> None:
+    try:
+        json.dump(cache, open(_API_CACHE_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"❌ save api cache failed | {e}")
+
+_API_FAIL_COOLDOWN = 1800   # ۳۰ دقیقه
 _API_HEALTH_COOLDOWN = 600  # ۱۰ دقیقه
-
-# وضعیت آخرین سلامت هر کلید (برای تشخیص بازیابی)
-_API_HEALTH_STATE: dict = {}
 
 def _send_telegram_simple(text: str) -> bool:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -34,12 +44,14 @@ def _send_telegram_simple(text: str) -> bool:
         return False
 
 def notify_api_failure(component: str, error: object = "") -> None:
-    """اعلام خرابی یک بخش API به تلگرام، با کول‌داون ۳۰ دقیقه."""
+    """اعلام خرابی با کول‌داون ۳۰ دقیقه‌ای که تو فایل ذخیره میشه."""
+    cache = _load_cache()
     now = time.time()
-    last = _API_FAIL_CACHE.get(component, 0)
+    last = cache["fail"].get(component, 0)
     if now - last < _API_FAIL_COOLDOWN:
         return
-    _API_FAIL_CACHE[component] = now
+    cache["fail"][component] = now
+    _save_cache(cache)
 
     err_text = html.escape(str(error)[:200]) if error else "unknown"
     ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
@@ -55,7 +67,7 @@ def notify_api_failure(component: str, error: object = "") -> None:
     logger.error(f"API DOWN | {component} | {err_text}")
 
 def notify_api_recovered(component: str) -> None:
-    """اعلام بازیابی یک کلید به تلگرام."""
+    """اعلام بازیابی."""
     ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
     msg = (
         f"✅ <b>API RECOVERED</b>\n"
@@ -67,16 +79,12 @@ def notify_api_recovered(component: str) -> None:
     logger.info(f"API RECOVERED | {component}")
 
 def check_api_health() -> None:
-    """
-    هر ۱۰ دقیقه یک‌بار هر سه کلید ByKaranteli را چک می‌کند.
-    - اگر کلیدی خراب شد → پیام API DOWN با اسم همان کلید.
-    - اگر کلید خراب دوباره سالم شد → پیام API RECOVERED.
-    """
+    """هر ۱۰ دقیقه یک‌بار (بر اساس فایل) هر سه کلید رو چک می‌کنه."""
+    cache = _load_cache()
     now = time.time()
-    last = _API_HEALTH_CACHE.get("last_check", 0)
-    if now - last < _API_HEALTH_COOLDOWN:
+    if now - cache.get("health_last", 0) < _API_HEALTH_COOLDOWN:
         return
-    _API_HEALTH_CACHE["last_check"] = now
+    cache["health_last"] = now
 
     pairs = [
         ("LPDtop", BYKARANTELI_KEY_LPD),
@@ -105,14 +113,16 @@ def check_api_health() -> None:
             except Exception:
                 status = "timeout"
 
-        prev = _API_HEALTH_STATE.get(name)
-        _API_HEALTH_STATE[name] = status
+        prev = cache["health_state"].get(name)
+        cache["health_state"][name] = status
 
         if status != "ok":
             notify_api_failure(f"ByKaranteli ({name} key)", status)
         else:
             if prev is not None and prev != "ok":
                 notify_api_recovered(f"ByKaranteli ({name} key)")
+
+    _save_cache(cache)
 
 # ============================================================
 # کندل بایننس
@@ -148,7 +158,6 @@ def get_klines_binance(symbol: str, interval: str, limit: int = 300) -> Optional
 # اردربوک: OKX Futures + فالبک Binance Spot
 # ============================================================
 def get_orderbook_okx_futures(symbol: str) -> Optional[dict]:
-    # ۱. OKX Futures
     try:
         base = symbol[:-4]
         r = requests.get(
@@ -167,7 +176,6 @@ def get_orderbook_okx_futures(symbol: str) -> Optional[dict]:
     except Exception as e:
         logger.debug(f"OKX Futures OB failed | {symbol} | {e}")
 
-    # ۲. فالبک Binance Spot
     try:
         r = requests.get(
             "https://data-api.binance.vision/api/v3/depth",
@@ -189,7 +197,7 @@ def get_orderbook_okx_futures(symbol: str) -> Optional[dict]:
     return None
 
 # ============================================================
-# ✅ معاملات واقعی OKX (برای تایید پر شدن سفارش)
+# معاملات واقعی OKX
 # ============================================================
 def get_recent_trades_okx(symbol: str, limit: int = 100) -> Optional[list]:
     try:
@@ -221,14 +229,9 @@ def get_recent_trades_okx(symbol: str, limit: int = 100) -> Optional[list]:
     return None
 
 # ============================================================
-# ByKaranteli با سه کلید و Fallback کامل
+# ByKaranteli با سه کلید و Fallback
 # ============================================================
 def _fetch_bykaranteli(path: str, params: dict, key_type: str) -> Optional[dict]:
-    """
-    key_type = "LPD"  → Whale Tape: اولویت LPD, Backup, FWP
-    key_type = "FWP"  → LiqMap:     اولویت FWP, Backup, LPD
-    اگر یکی خراب بود، بعدی امتحان می‌شود و通知 خرابی همان کلید داده می‌شود.
-    """
     if key_type == "LPD":
         ordered = [
             ("LPDtop", BYKARANTELI_KEY_LPD),
