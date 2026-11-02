@@ -14,6 +14,12 @@ logger = logging.getLogger("LPD.Data")
 _API_FAIL_CACHE: dict = {}
 _API_FAIL_COOLDOWN = 1800  # ۳۰ دقیقه
 
+_API_HEALTH_CACHE: dict = {}
+_API_HEALTH_COOLDOWN = 600  # ۱۰ دقیقه
+
+# وضعیت آخرین سلامت هر کلید (برای تشخیص بازیابی)
+_API_HEALTH_STATE: dict = {}
+
 def _send_telegram_simple(text: str) -> bool:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return False
@@ -47,6 +53,66 @@ def notify_api_failure(component: str, error: object = "") -> None:
     )
     _send_telegram_simple(msg)
     logger.error(f"API DOWN | {component} | {err_text}")
+
+def notify_api_recovered(component: str) -> None:
+    """اعلام بازیابی یک کلید به تلگرام."""
+    ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+    msg = (
+        f"✅ <b>API RECOVERED</b>\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"• بخش: <b>{html.escape(component)}</b>\n"
+        f"• زمان (UTC): {ts}"
+    )
+    _send_telegram_simple(msg)
+    logger.info(f"API RECOVERED | {component}")
+
+def check_api_health() -> None:
+    """
+    هر ۱۰ دقیقه یک‌بار هر سه کلید ByKaranteli را چک می‌کند.
+    - اگر کلیدی خراب شد → پیام API DOWN با اسم همان کلید.
+    - اگر کلید خراب دوباره سالم شد → پیام API RECOVERED.
+    """
+    now = time.time()
+    last = _API_HEALTH_CACHE.get("last_check", 0)
+    if now - last < _API_HEALTH_COOLDOWN:
+        return
+    _API_HEALTH_CACHE["last_check"] = now
+
+    pairs = [
+        ("LPDtop", BYKARANTELI_KEY_LPD),
+        ("FWP-Bot", BYKARANTELI_KEY_FWP),
+        ("Backup", BYKARANTELI_KEY_BACKUP),
+    ]
+
+    for name, key in pairs:
+        if not key:
+            status = "missing"
+        else:
+            try:
+                r = requests.get(
+                    "https://bykaranteli.com/api/v1/usage",
+                    headers={"Authorization": f"Bearer {key}"},
+                    timeout=10,
+                )
+                if r.status_code == 200:
+                    status = "ok"
+                elif r.status_code == 401:
+                    status = "invalid_key"
+                elif r.status_code == 429:
+                    status = "rate_limit"
+                else:
+                    status = f"HTTP {r.status_code}"
+            except Exception:
+                status = "timeout"
+
+        prev = _API_HEALTH_STATE.get(name)
+        _API_HEALTH_STATE[name] = status
+
+        if status != "ok":
+            notify_api_failure(f"ByKaranteli ({name} key)", status)
+        else:
+            if prev is not None and prev != "ok":
+                notify_api_recovered(f"ByKaranteli ({name} key)")
 
 # ============================================================
 # کندل بایننس
@@ -119,7 +185,6 @@ def get_orderbook_okx_futures(symbol: str) -> Optional[dict]:
         notify_api_failure("OrderBook (OKX + Binance fallback)", e)
         return None
 
-    # هر دو شکست خوردن
     notify_api_failure("OrderBook (OKX + Binance fallback)", "no bids/asks")
     return None
 
@@ -143,7 +208,7 @@ def get_recent_trades_okx(symbol: str, limit: int = 100) -> Optional[list]:
                     trades.append({
                         "price": float(t["px"]),
                         "size": float(t["sz"]),
-                        "side": t["side"],  # buy / sell
+                        "side": t["side"],
                         "ts": int(t["ts"]),
                     })
                 except (KeyError, ValueError):
@@ -156,16 +221,29 @@ def get_recent_trades_okx(symbol: str, limit: int = 100) -> Optional[list]:
     return None
 
 # ============================================================
-# ByKaranteli (Whale Tape + LiqMap) با دو کلید و Fallback
+# ByKaranteli با سه کلید و Fallback کامل
 # ============================================================
 def _fetch_bykaranteli(path: str, params: dict, key_type: str) -> Optional[dict]:
-    keys = (
-        [BYKARANTELI_KEY_LPD, BYKARANTELI_KEY_FWP]
-        if key_type == "LPD"
-        else [BYKARANTELI_KEY_FWP, BYKARANTELI_KEY_LPD]
-    )
+    """
+    key_type = "LPD"  → Whale Tape: اولویت LPD, Backup, FWP
+    key_type = "FWP"  → LiqMap:     اولویت FWP, Backup, LPD
+    اگر یکی خراب بود، بعدی امتحان می‌شود و通知 خرابی همان کلید داده می‌شود.
+    """
+    if key_type == "LPD":
+        ordered = [
+            ("LPDtop", BYKARANTELI_KEY_LPD),
+            ("Backup", BYKARANTELI_KEY_BACKUP),
+            ("FWP-Bot", BYKARANTELI_KEY_FWP),
+        ]
+    else:
+        ordered = [
+            ("FWP-Bot", BYKARANTELI_KEY_FWP),
+            ("Backup", BYKARANTELI_KEY_BACKUP),
+            ("LPDtop", BYKARANTELI_KEY_LPD),
+        ]
+
     last_err = None
-    for key in keys:
+    for name, key in ordered:
         if not key:
             continue
         try:
@@ -179,18 +257,22 @@ def _fetch_bykaranteli(path: str, params: dict, key_type: str) -> Optional[dict]
                 return r.json()
             elif r.status_code == 401:
                 last_err = "invalid_key (401)"
-                logger.warning(f"⚠️ ByKaranteli 401 | {key_type} | trying fallback...")
+                notify_api_failure(f"ByKaranteli ({name} key)", last_err)
+                logger.warning(f"⚠️ ByKaranteli 401 | {name} | trying next...")
                 continue
             elif r.status_code == 429:
-                last_err = "rate limit (429)"
-                logger.warning(f"⚠️ ByKaranteli 429 | {key_type} | trying fallback...")
+                last_err = "rate_limit (429)"
+                notify_api_failure(f"ByKaranteli ({name} key)", last_err)
+                logger.warning(f"⚠️ ByKaranteli 429 | {name} | trying next...")
                 continue
             else:
                 last_err = f"HTTP {r.status_code}"
         except Exception as e:
             last_err = e
-    logger.error(f"❌ ByKaranteli failed | {key_type} | {last_err}")
-    notify_api_failure(f"ByKaranteli ({key_type} key)", last_err or "no valid key/response")
+            logger.warning(f"⚠️ ByKaranteli exception | {name} | {e}")
+
+    logger.error(f"❌ ByKaranteli ALL KEYS FAILED | {key_type} | {last_err}")
+    notify_api_failure(f"ByKaranteli ({key_type} ALL KEYS)", last_err or "no valid key")
     return None
 
 def get_whale_tape(symbol: str) -> Optional[dict]:
