@@ -24,7 +24,7 @@
       "symbol": "BICOUSDT",
       "target_price": 0.01824,
       "profit_pct": 16.25,
-      "status": "waiting",
+      "status": "ready",
       "initial_whale_usd": 0,
       "ob_high": null,
       "ob_low": null,
