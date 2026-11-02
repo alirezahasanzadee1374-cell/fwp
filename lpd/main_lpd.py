@@ -1,12 +1,18 @@
 """
-main_lpd.py — اجراکننده اصلی LPD (با لاگ‌های دقیق برای دیباگ)
+main_lpd.py — اجراکننده اصلی LPD
 """
 import os, sys, time, json, base64, hashlib, logging, importlib, tempfile
 from typing import Optional
 import requests
 
 from lpd.lpd_config import *
-from lpd.lpd_data import get_klines_binance, get_orderbook_okx_futures, get_whale_tape, get_liqmap
+from lpd.lpd_data import (
+    get_klines_binance,
+    get_orderbook_okx_futures,
+    get_whale_tape,
+    get_liqmap,
+    check_api_health,   # ✅ اضافه شد
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger("LPD.Main")
@@ -98,6 +104,7 @@ def run_full_scan(state, strategy):
 
 def run_active_scan(state, strategy):
     logger.info("👁 Active scan started")
+    check_api_health()  # ✅ هر ۱۰ دقیقه یک‌بار واقعاً چک می‌کند
     
     pos = state.get("active_position")
     
@@ -175,7 +182,7 @@ def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "full"
     logger.info(f"▶️ LPD {mode.upper()}")
     strategy = load_lpd_strategy()
-    state = load_state()  # <--- حالا لاگ می‌ده که استیت چی لود شد
+    state = load_state()
     if mode == "active": run_active_scan(state, strategy)
     else: run_full_scan(state, strategy)
 
