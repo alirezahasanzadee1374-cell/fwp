@@ -1,9 +1,9 @@
 {
   "fail": {},
-  "health_last": 1793579620.1489367,
+  "health_last": 1793580224.0451195,
   "health_state": {
     "LPDtop": "ok",
     "FWP-Bot": "ok",
-    "Backup": "missing"
+    "Backup": "ok"
   }
 }
