@@ -7,9 +7,10 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 MASTER_KEY = os.environ.get("MASTER_KEY", "")
 
-# دو کلید جدا برای جلوگیری از بلاک شدن API
-BYKARANTELI_KEY_LPD = os.environ.get("BYKARANTELI_KEY_LPD", "") # برای Whale Tape
-BYKARANTELI_KEY_FWP = os.environ.get("BYKARANTELI_KEY_FWP", "") # برای LiqMap
+# سه کلید جدا برای Fallback کامل
+BYKARANTELI_KEY_LPD = os.environ.get("BYKARANTELI_KEY_LPD", "")       # اولویت Whale Tape
+BYKARANTELI_KEY_FWP = os.environ.get("BYKARANTELI_KEY_FWP", "")       # اولویت LiqMap
+BYKARANTELI_KEY_BACKUP = os.environ.get("BYKARANTELI_KEY_BACKUP", "") # پشتیبان
 
 BYBIT_PROXY_URL = "https://bybit-proxy.alirezahasanzadee1374.workers.dev"
 
