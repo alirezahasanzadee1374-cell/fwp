@@ -1,32 +1,47 @@
 name: LPD - Full Scan
+
 on:
+  # schedule: [{cron: '*/30 * * * *'}]  <- با cron-job.org اجرا میشه
   workflow_dispatch: {}
+
 concurrency:
   group: lpd-scan
   cancel-in-progress: false
+
 permissions:
   contents: write
+
 jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
-        with: {python-version: '3.10', cache: 'pip'}
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
       - run: pip install -r requirements.txt
-      - run: python -m lpd.main_lpd
+
+      - name: Run LPD Full Scan
+        run: python -m lpd.main_lpd
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MASTER_KEY: ${{ secrets.MASTER_KEY }}
           BYKARANTELI_KEY_LPD: ${{ secrets.BYKARANTELI_KEY_LPD }}
           BYKARANTELI_KEY_FWP: ${{ secrets.BYKARANTELI_KEY_FWP }}
+          BYKARANTELI_KEY_BACKUP: ${{ secrets.BYKARANTELI_KEY_BACKUP }}
+
       - name: Commit state
         if: always()
         run: |
           git config --local user.email "bot@github.com"
           git config --local user.name "Bot"
-          git add lpd_state.json 2>/dev/null || true
+          git add lpd_state.json lpd_api_cache.json 2>/dev/null || true
           git diff --quiet && git diff --staged --quiet || git commit -m "LPD scan state"
-          for i in 1 2 3; do git pull --rebase origin main && git push && break || sleep 2; done
+          for i in 1 2 3; do
+            git pull --rebase origin main && git push && break || sleep 2
+          done
