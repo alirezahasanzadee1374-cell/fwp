@@ -49,9 +49,19 @@
       "ob_high": null,
       "ob_low": null,
       "added_at": 1793578851.0652485
+    },
+    "SOMIUSDT": {
+      "symbol": "SOMIUSDT",
+      "target_price": 0.201,
+      "profit_pct": 8.94,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793580006.3305435
     }
   },
-  "scan_index": 200,
+  "scan_index": 300,
   "active_position": null,
   "last_pos_check": 0
 }
