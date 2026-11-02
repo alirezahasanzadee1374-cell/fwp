@@ -39,9 +39,29 @@
       "ob_high": null,
       "ob_low": null,
       "added_at": 1793577688.0387154
+    },
+    "PEPEUSDT": {
+      "symbol": "PEPEUSDT",
+      "target_price": 5.68e-06,
+      "profit_pct": 16.39,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793578846.30002
+    },
+    "BEAMXUSDT": {
+      "symbol": "BEAMXUSDT",
+      "target_price": 0.006377,
+      "profit_pct": 14.74,
+      "status": "waiting",
+      "initial_whale_usd": 0,
+      "ob_high": null,
+      "ob_low": null,
+      "added_at": 1793578851.0652485
     }
   },
-  "scan_index": 300,
+  "scan_index": 100,
   "active_position": null,
   "last_pos_check": 0
 }
